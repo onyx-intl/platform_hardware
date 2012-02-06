@@ -86,41 +86,10 @@ struct fb_context_t
     int partial_width[20];
     int partial_height[20];
 #endif
-#ifdef SECOND_DISPLAY_SUPPORT
-    bool sec_display_inited;
-    int sec_fp;
-    int sec_disp_w;
-    int sec_disp_h;
-    int sec_disp_base;
-    int sec_disp_phys;
-    int sec_frame_size;
-    int sec_disp_next_buf;
-    struct fb_var_screeninfo sec_info;
-    struct fb_fix_screeninfo sec_finfo;
-    struct framebuffer_device_t* dev;
-    buffer_handle_t buffer;
-    sem_t sec_display_begin;
-    sem_t sec_display_end;
-    pthread_t thread_id;
-    C2D_CONTEXT c2dctx;
-    int sec_rotation;
-    int cleancount;
-    int mRotate;
-    int video_play_mode;
-#endif
 };
 
 static int nr_framebuffers;
 static int no_ipu = 0;
-
-#ifdef SECOND_DISPLAY_SUPPORT
-#define MAX_SEC_DISP_WIDTH (1024)
-#define MAX_SEC_DISP_HEIGHT (1024)
-static int mapSecFrameBuffer(fb_context_t* ctx);
-static int resizeToSecFrameBuffer(int base,int phys,fb_context_t* ctx);
-static int resizeToSecFrameBuffer_c2d(int base,int phys,fb_context_t* ctx);
-void * secDispShowFrames(void * arg);
-#endif
 
 #ifdef FSL_EPDC_FB
 #define WAVEFORM_MODE_INIT                      0x0   // Screen goes to white (clears)
@@ -351,33 +320,6 @@ static int fb_setUpdateRect(struct framebuffer_device_t* dev,
     return 0;
 }
 
-#ifdef SECOND_DISPLAY_SUPPORT
-static int fb_setSecRotation(struct framebuffer_device_t* dev,int secRotation)
-{
-    fb_context_t* ctx = (fb_context_t*)dev;
-    //LOGI("fb_setSecRotation %d",secRotation);
-    if((ctx->sec_rotation != secRotation)&&(ctx->sec_disp_base != 0))
-        memset((void *)ctx->sec_disp_base, 0, ctx->sec_frame_size*nr_framebuffers);
-    ctx->sec_rotation = secRotation;
-    switch(secRotation)
-    {
-    case 4:
-        ctx->mRotate = 90;
-        break;
-    case 3:
-        ctx->mRotate = 180;
-        break;
-    case 7:
-        ctx->mRotate = 270;
-        break;
-    case 0:
-    default:
-        ctx->mRotate = 0;
-        break;
-    }
-    return 0;
-}
-#endif
 #endif
 
 
@@ -409,155 +351,11 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         m->info.activate = FB_ACTIVATE_VBL;
         m->info.yoffset = offset / m->finfo.line_length;
 
-#ifdef SECOND_DISPLAY_SUPPORT
-        //Check the prop rw.SECOND_DISPLAY_CONNECTED
-        char value[PROPERTY_VALUE_MAX];
-
-        property_get("rw.SECOND_DISPLAY_CONNECTED", value, "");
-        if (strcmp(value, "1") == 0) {
-            if(!ctx->sec_display_inited) {
-                //Init the second display
-                if(mapSecFrameBuffer(ctx)== 0)
-                {    
-                    ctx->sec_display_inited = true;
-                    c2dCreateContext(&ctx->c2dctx); 
-
-                    sem_init(&ctx->sec_display_begin, 0, 0);
-                    sem_init(&ctx->sec_display_end, 0, 0);
-
-                    pthread_create(&ctx->thread_id, NULL, &secDispShowFrames, (void *)ctx);
-
-                    //Set the prop rw.SECOND_DISPLAY_ENABLED to 1
-                    LOGI("sys.SECOND_DISPLAY_ENABLED Set to 1");
-                    property_set("sys.SECOND_DISPLAY_ENABLED", "1");
-                }
-            }
-
-            if(ctx->sec_display_inited) {
-                //Resize the primary display to the second display
-                ctx->dev = dev;
-                ctx->buffer = buffer;
-                sem_post(&ctx->sec_display_begin);
-            }
-        }
-        else{
-            if(ctx->sec_display_inited) {
-
-                ctx->sec_display_inited = false;
-
-                sem_post(&ctx->sec_display_begin);
-                sem_wait(&ctx->sec_display_end);
-
-                sem_destroy(&ctx->sec_display_begin);
-                sem_destroy(&ctx->sec_display_end);
-
-                if (ctx->c2dctx != NULL)c2dDestroyContext(ctx->c2dctx);
-
-                //Set the prop rw.SECOND_DISPLAY_ENABLED to 0
-                LOGI("Switch back to display 0");
-                LOGI("sys.SECOND_DISPLAY_ENABLED Set to 0");
-                property_set("sys.SECOND_DISPLAY_ENABLED", "0");
-                memset((void *)ctx->sec_disp_base, 0, ctx->sec_frame_size*nr_framebuffers);
-                //unmap the sec_disp_base
-                munmap((void *)ctx->sec_disp_base, ctx->sec_frame_size*nr_framebuffers);
-                ctx->sec_disp_base = 0;
-                //DeInit the second display
-                if(ctx->sec_fp && ctx->video_play_mode == SIN_VIDEO_DUAL_UI) {
-                    int fp_property = open("/sys/class/graphics/fb1/fsl_disp_property",O_RDWR, 0); 
-                    if(fp_property >= 0) {
-                        char overlayStr[32];
-                        int blank;
-                        int fb2_fp;
-                        struct fb_var_screeninfo fb0_var;
-
-                        blank = 1;
-
-                        fb2_fp = open("/dev/graphics/fb2",O_RDWR, 0);
-                        if (fb2_fp < 0){
-                            LOGE("Error!Cannot open the /dev/graphics/fb2");
-                        }
-                        else{
-                            if(ioctl(fb2_fp, FBIOBLANK, blank) < 0) {
-                                LOGI("Error!BLANK FB2 failed!\n");
-                            }
-                            close(fb2_fp);
-                        }
-
-                        if(ioctl(ctx->sec_fp, FBIOBLANK, blank) < 0) {
-                            LOGI("Error!BLANK FB1 failed!\n");
-                        }
-
-                        if(ioctl(m->framebuffer->fd, FBIOBLANK, blank) < 0) {
-                            LOGI("Error!BLANK FB0 failed!\n");
-                        }
-
-                        memset(overlayStr, 0 ,32);
-                        strcpy(overlayStr, "1-layer-fb\n");
-                        LOGI("WRITE 1-layer-fb to fb1/fsl_disp_property");
-                        write(fp_property, overlayStr, strlen(overlayStr)+1);
-                        close(fp_property);
-
-                        blank = FB_BLANK_POWERDOWN;
-                        if(ioctl(ctx->sec_fp, FBIOBLANK, blank) < 0) {
-                            LOGI("Error!BLANK FB1 failed!\n");
-                        }
-                        blank = FB_BLANK_UNBLANK;
-                        if(ioctl(m->framebuffer->fd, FBIOBLANK, blank) < 0) {
-                            LOGI("Error!UNBLANK FB0 failed!\n");
-                        }
-
-                        if (ioctl(m->framebuffer->fd, FBIOGET_VSCREENINFO,
-                            &fb0_var) < 0) {
-                                LOGE("Error!Cannot get var info for fb0");
-                        }
-
-                        if (fb0_var.bits_per_pixel == 32) {
-                            struct mxcfb_loc_alpha l_alpha;
-
-                            l_alpha.enable = true;
-                            l_alpha.alpha_in_pixel = true;
-                            if (ioctl(m->framebuffer->fd, MXCFB_SET_LOC_ALPHA,
-                                &l_alpha) < 0) {
-                                    LOGE("Error!MXCFB_SET_LOC_ALPHA failed!");
-                            }
-                        } else {
-                            struct mxcfb_gbl_alpha gbl_alpha;
-                            struct mxcfb_color_key key;
-
-                            gbl_alpha.alpha = 255;
-                            gbl_alpha.enable = 1;
-                            if (ioctl(m->framebuffer->fd, MXCFB_SET_GBL_ALPHA,
-                                &gbl_alpha) < 0) {
-                                    LOGE("Error!MXCFB_SET_GBL_ALPHA failed!");
-                            }
-
-                            key.enable = 1;
-                            key.color_key = 0x00000000; // Black
-                            LOGI("MXCFB_SET_CLR_KEY");
-                            if( ioctl(m->framebuffer->fd, MXCFB_SET_CLR_KEY,
-                                &key) < 0)
-                            {
-                                LOGE("Error!MXCFB_SET_CLR_KEY for fb0");
-                            }
-                        }
-                    }
-                    close(ctx->sec_fp);
-                    ctx->sec_fp = 0;
-                }
-            }
-        }
-
-#endif
-
         if (ioctl(m->framebuffer->fd, FBIOPAN_DISPLAY, &m->info) == -1) {
             LOGE("FBIOPAN_DISPLAY failed");
             m->base.unlock(&m->base, buffer); 
             return -errno;
         }
-
-#ifdef SECOND_DISPLAY_SUPPORT
-        if(ctx->sec_display_inited) sem_wait(&ctx->sec_display_end);
-#endif
 
 #ifdef FSL_EPDC_FB
         if(ctx->rect_update)
@@ -876,259 +674,277 @@ set_graphics_fb_mode_error:
 int mapFrameBufferLocked(struct private_module_t* module)
 {
     // already initialized...
-    if (module->framebuffer) {
+    if (module->framebuffer)
+    {
         return 0;
     }
 
-    char const * const device_template[] = {
+    char const * const device_template[] =
+    {
         "/dev/graphics/fb%u",
         "/dev/fb%u",
-        0 };
+        0
+    };
 
-        int fd = -1;
-        int i=0;
-        char name[64];
+    int fd = -1;
+    int i=0;
+    char name[64];
 
-        char value[PROPERTY_VALUE_MAX];
-        property_get("ro.UI_TVOUT_DISPLAY", value, "");
-        if (strcmp(value, "1") != 0) {
-            set_graphics_fb_mode(0, 0);
-            while ((fd==-1) && device_template[i]) {
-                snprintf(name, 64, device_template[i], 0);
-                fd = open(name, O_RDWR, 0);
-                i++;
-            }
+    char value[PROPERTY_VALUE_MAX];
+    property_get("ro.UI_TVOUT_DISPLAY", value, "");
+    if (strcmp(value, "1") != 0)
+    {
+        set_graphics_fb_mode(0, 0);
+        while ((fd==-1) && device_template[i])
+        {
+            snprintf(name, 64, device_template[i], 0);
+            fd = open(name, O_RDWR, 0);
+            i++;
         }
-        else{
-            set_graphics_fb_mode(1, 0);
-            while ((fd==-1) && device_template[i]) {
-                snprintf(name, 64, device_template[i], 1);
-                fd = open(name, O_RDWR, 0);
-                i++;
-            }
+    }
+    else
+    {
+        set_graphics_fb_mode(1, 0);
+        while ((fd==-1) && device_template[i])
+        {
+            snprintf(name, 64, device_template[i], 1);
+            fd = open(name, O_RDWR, 0);
+            i++;
         }
+    }
 
-        if (fd < 0)
-            return -errno;
+    if (fd < 0)
+        return -errno;
 
-        struct fb_fix_screeninfo finfo;
-        if (ioctl(fd, FBIOGET_FSCREENINFO, &finfo) == -1)
-            return -errno;
+    struct fb_fix_screeninfo finfo;
+    if (ioctl(fd, FBIOGET_FSCREENINFO, &finfo) == -1)
+        return -errno;
 
-        struct fb_var_screeninfo info;
-        if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == -1)
-            return -errno;
+    struct fb_var_screeninfo info;
+    if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == -1)
+        return -errno;
 
+    info.reserved[0] = 0;
+    info.reserved[1] = 0;
+    info.reserved[2] = 0;
+    info.xoffset = 0;
+    info.yoffset = 0;
+    info.activate = FB_ACTIVATE_NOW;
 
+    if(info.bits_per_pixel == 32)
+    {
+        LOGW("32bpp setting of Framebuffer catched!");
+        /*
+        * Explicitly request BGRA 8/8/8
+        */
+        info.bits_per_pixel = 32;
+        info.red.offset     = 8;
+        info.red.length     = 8;
+        info.green.offset   = 16;
+        info.green.length   = 8;
+        info.blue.offset    = 24;
+        info.blue.length    = 8;
+        info.transp.offset  = 0;
+        info.transp.length  = 0;
 
-        info.reserved[0] = 0;
-        info.reserved[1] = 0;
-        info.reserved[2] = 0;
-        info.xoffset = 0;
-        info.yoffset = 0;
-        info.activate = FB_ACTIVATE_NOW;
-
-        if(info.bits_per_pixel == 32){
-            LOGW("32bpp setting of Framebuffer catched!");
-            /*
-            * Explicitly request BGRA 8/8/8
-            */
-            info.bits_per_pixel = 32;
-            info.red.offset     = 8;
-            info.red.length     = 8;
-            info.green.offset   = 16;
-            info.green.length   = 8;
-            info.blue.offset    = 24;
-            info.blue.length    = 8;
-            info.transp.offset  = 0;
-            info.transp.length  = 0;
 #ifndef FSL_EPDC_FB
-            /*
-            *  set the alpha in pixel
-            *  only when the fb set to 32bit
-            */
-            struct mxcfb_loc_alpha l_alpha;
-            l_alpha.enable = true;
-            l_alpha.alpha_in_pixel = true;
-            if (ioctl(fd, MXCFB_SET_LOC_ALPHA,
-                &l_alpha) < 0) {
-                    printf("Set local alpha failed\n");
-                    close(fd);
-                    return -errno;
-            }
-#endif
-        }
-        else{
-            /*
-            * Explicitly request 5/6/5
-            */
-            info.bits_per_pixel = 16;
-            info.red.offset     = 11;
-            info.red.length     = 5;
-            info.green.offset   = 5;
-            info.green.length   = 6;
-            info.blue.offset    = 0;
-            info.blue.length    = 5;
-            info.transp.offset  = 0;
-            info.transp.length  = 0;
-
-            if (!no_ipu) {
-                /* for the 16bit case, only involke the glb alpha */
-                struct mxcfb_gbl_alpha gbl_alpha;
-
-                gbl_alpha.alpha = 255;
-                gbl_alpha.enable = 1;
-                int ret = ioctl(fd, MXCFB_SET_GBL_ALPHA, &gbl_alpha);
-                if(ret <0) {
-                    LOGE("Error!MXCFB_SET_GBL_ALPHA failed!");
-                    return -1;
-                }
-
-                struct mxcfb_color_key key;
-                key.enable = 1;
-                key.color_key = 0x00000000; // Black
-                ret = ioctl(fd, MXCFB_SET_CLR_KEY, &key);
-                if(ret <0) {
-                    LOGE("Error!Colorkey setting failed for dev ");
-                    return -1;
-                }
-            }
-        }
-
         /*
-        * Request nr_framebuffers screens (at lest 2 for page flipping)
+        *  set the alpha in pixel
+        *  only when the fb set to 32bit
         */
-        info.yres_virtual = ALIGN_PIXEL_128(info.yres) * nr_framebuffers;
-        info.xres_virtual = ALIGN_PIXEL(info.xres);
-
-#ifdef FSL_EPDC_FB
+        struct mxcfb_loc_alpha l_alpha;
+        l_alpha.enable = true;
+        l_alpha.alpha_in_pixel = true;
+        if (ioctl(fd, MXCFB_SET_LOC_ALPHA,            &l_alpha) < 0)
+        {
+            printf("Set local alpha failed\n");
+            close(fd);
+            return -errno;
+        }
+#endif
+    }
+    else
+    {
+        /*
+        * Explicitly request 5/6/5
+        */
         info.bits_per_pixel = 16;
-        info.grayscale = 0;
-        info.yoffset = 0;
-#endif
+        info.red.offset     = 11;
+        info.red.length     = 5;
+        info.green.offset   = 5;
+        info.green.length   = 6;
+        info.blue.offset    = 0;
+        info.blue.length    = 5;
+        info.transp.offset  = 0;
+        info.transp.length  = 0;
 
-        uint32_t flags = PAGE_FLIP;
-        if (ioctl(fd, FBIOPUT_VSCREENINFO, &info) == -1) {
-            info.yres_virtual = ALIGN_PIXEL_128(info.yres);
-            flags &= ~PAGE_FLIP;
-            LOGW("FBIOPUT_VSCREENINFO failed, page flipping not supported");
+        if (!no_ipu)
+        {
+            /* for the 16bit case, only involke the glb alpha */
+            struct mxcfb_gbl_alpha gbl_alpha;
+
+            gbl_alpha.alpha = 255;
+            gbl_alpha.enable = 1;
+            int ret = ioctl(fd, MXCFB_SET_GBL_ALPHA, &gbl_alpha);
+            if(ret <0)
+            {
+                LOGE("Error!MXCFB_SET_GBL_ALPHA failed!");
+                return -1;
+            }
+
+            struct mxcfb_color_key key;
+            key.enable = 1;
+            key.color_key = 0x00000000; // Black
+            ret = ioctl(fd, MXCFB_SET_CLR_KEY, &key);
+            if(ret <0)
+            {
+                LOGE("Error!Colorkey setting failed for dev ");
+                return -1;
+            }
         }
+    }
 
-        if (info.yres_virtual < ALIGN_PIXEL_128(info.yres) * 2) {
-            // we need at least 2 for page-flipping
-            info.yres_virtual = ALIGN_PIXEL_128(info.yres);
-            flags &= ~PAGE_FLIP;
-            LOGW("page flipping not supported (yres_virtual=%d, requested=%d)",
-                info.yres_virtual, ALIGN_PIXEL_128(info.yres)*2);
-        }
-
-        if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == -1)
-            return -errno;
+    /*
+    * Request nr_framebuffers screens (at lest 2 for page flipping)
+    */
+    info.yres_virtual = ALIGN_PIXEL_128(info.yres) * nr_framebuffers;
+    info.xres_virtual = ALIGN_PIXEL(info.xres);
 
 #ifdef FSL_EPDC_FB
-        int auto_update_mode = AUTO_UPDATE_MODE_REGION_MODE;
-        int retval = ioctl(fd, MXCFB_SET_AUTO_UPDATE_MODE, &auto_update_mode);
-        if (retval < 0) {
-            LOGE("Error! set auto update mode error!\n");
-            return -errno;
-        }
-
-        int scheme_mode = UPDATE_SCHEME_QUEUE_AND_MERGE;
-        retval = ioctl(fd, MXCFB_SET_UPDATE_SCHEME, &scheme_mode);
-        if (retval < 0) {
-            LOGE("Error! set update scheme error!\n");
-            return -errno;
-        }
+    info.bits_per_pixel = 16;
+    info.grayscale = 0;
+    info.yoffset = 0;
 #endif
-        int refreshRate = 1000000000000000LLU /
-            (
-            uint64_t( info.upper_margin + info.lower_margin + info.yres )
-            * ( info.left_margin  + info.right_margin + info.xres )
-            * info.pixclock
-            );
 
-        if (refreshRate == 0) {
-            // bleagh, bad info from the driver
-            refreshRate = 60*1000;  // 60 Hz
-        }
+    uint32_t flags = PAGE_FLIP;
+    if (ioctl(fd, FBIOPUT_VSCREENINFO, &info) == -1)
+    {
+        info.yres_virtual = ALIGN_PIXEL_128(info.yres);
+        flags &= ~PAGE_FLIP;
+        LOGW("FBIOPUT_VSCREENINFO failed, page flipping not supported");
+    }
 
-        if (int(info.width) <= 0 || int(info.height) <= 0) {
-            // the driver doesn't return that information
-            // default to 160 dpi
-            info.width  = ((info.xres * 25.4f)/160.0f + 0.5f);
-            info.height = ((info.yres * 25.4f)/160.0f + 0.5f);
-        }
+    if (info.yres_virtual < ALIGN_PIXEL_128(info.yres) * 2)
+    {
+        // we need at least 2 for page-flipping
+        info.yres_virtual = ALIGN_PIXEL_128(info.yres);
+        flags &= ~PAGE_FLIP;
+        LOGW("page flipping not supported (yres_virtual=%d, requested=%d)",
+            info.yres_virtual, ALIGN_PIXEL_128(info.yres)*2);
+    }
 
-        float xdpi = (info.xres * 25.4f) / info.width;
-        float ydpi = (info.yres * 25.4f) / info.height;
-        float fps  = refreshRate / 1000.0f;
+    if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == -1)
+        return -errno;
 
-        LOGI(   "using (fd=%d)\n"
-            "id           = %s\n"
-            "xres         = %d px\n"
-            "yres         = %d px\n"
-            "xres_virtual = %d px\n"
-            "yres_virtual = %d px\n"
-            "bpp          = %d\n"
-            "r            = %2u:%u\n"
-            "g            = %2u:%u\n"
-            "b            = %2u:%u\n",
-            fd,
-            finfo.id,
-            info.xres,
-            info.yres,
-            info.xres_virtual,
-            info.yres_virtual,
-            info.bits_per_pixel,
-            info.red.offset, info.red.length,
-            info.green.offset, info.green.length,
-            info.blue.offset, info.blue.length
-            );
+#ifdef FSL_EPDC_FB
+    int auto_update_mode = AUTO_UPDATE_MODE_REGION_MODE;
+    int retval = ioctl(fd, MXCFB_SET_AUTO_UPDATE_MODE, &auto_update_mode);
+    if (retval < 0)
+    {
+        LOGE("Error! set auto update mode error!\n");
+        return -errno;
+    }
 
-        LOGI(   "width        = %d mm (%f dpi)\n"
-            "height       = %d mm (%f dpi)\n"
-            "refresh rate = %.2f Hz\n",
-            info.width,  xdpi,
-            info.height, ydpi,
-            fps
-            );
+    int scheme_mode = UPDATE_SCHEME_QUEUE_AND_MERGE;
+    retval = ioctl(fd, MXCFB_SET_UPDATE_SCHEME, &scheme_mode);
+    if (retval < 0)
+    {
+        LOGE("Error! set update scheme error!\n");
+        return -errno;
+    }
+#endif
+    int refreshRate = 1000000000000000LLU /
+        (
+        uint64_t( info.upper_margin + info.lower_margin + info.yres )
+        * ( info.left_margin  + info.right_margin + info.xres )
+        * info.pixclock
+        );
+
+    if (refreshRate == 0)
+    {
+        // bleagh, bad info from the driver
+        refreshRate = 60*1000;  // 60 Hz
+    }
+
+    if (int(info.width) <= 0 || int(info.height) <= 0)
+    {
+        // the driver doesn't return that information
+        // default to 160 dpi
+        info.width  = ((info.xres * 25.4f)/160.0f + 0.5f);
+        info.height = ((info.yres * 25.4f)/160.0f + 0.5f);
+    }
+
+    float xdpi = (info.xres * 25.4f) / info.width;
+    float ydpi = (info.yres * 25.4f) / info.height;
+    float fps  = refreshRate / 1000.0f;
+
+    LOGI(   "using (fd=%d)\n"
+        "id           = %s\n"
+        "xres         = %d px\n"
+        "yres         = %d px\n"
+        "xres_virtual = %d px\n"
+        "yres_virtual = %d px\n"
+        "bpp          = %d\n"
+        "r            = %2u:%u\n"
+        "g            = %2u:%u\n"
+        "b            = %2u:%u\n",
+        fd,
+        finfo.id,
+        info.xres,
+        info.yres,
+        info.xres_virtual,
+        info.yres_virtual,
+        info.bits_per_pixel,
+        info.red.offset, info.red.length,
+        info.green.offset, info.green.length,
+        info.blue.offset, info.blue.length
+        );
+
+    LOGI(   "width        = %d mm (%f dpi)\n"
+        "height       = %d mm (%f dpi)\n"
+        "refresh rate = %.2f Hz\n",
+        info.width,  xdpi,
+        info.height, ydpi,
+        fps
+        );
 
 
-        if (ioctl(fd, FBIOGET_FSCREENINFO, &finfo) == -1)
-            return -errno;
+    if (ioctl(fd, FBIOGET_FSCREENINFO, &finfo) == -1)
+        return -errno;
 
-        if (finfo.smem_len <= 0)
-            return -errno;
+    if (finfo.smem_len <= 0)
+        return -errno;
 
 
-        module->flags = flags;
-        module->info = info;
-        module->finfo = finfo;
-        module->xdpi = xdpi;
-        module->ydpi = ydpi;
-        module->fps = fps;
+    module->flags = flags;
+    module->info = info;
+    module->finfo = finfo;
+    module->xdpi = xdpi;
+    module->ydpi = ydpi;
+    module->fps = fps;
 
-        /*
-        * map the framebuffer
-        */
+    /*
+    * map the framebuffer
+    */
 
-        int err;
-        size_t fbSize = roundUpToPageSize(finfo.line_length * info.yres_virtual);
-        module->framebuffer = new private_handle_t(dup(fd), fbSize,
-            private_handle_t::PRIV_FLAGS_USES_PMEM);
+    int err;
+    size_t fbSize = roundUpToPageSize(finfo.line_length * info.yres_virtual);
+    module->framebuffer = new private_handle_t(dup(fd), fbSize,
+        private_handle_t::PRIV_FLAGS_USES_PMEM);
 
-        module->numBuffers = info.yres_virtual / ALIGN_PIXEL_128(info.yres);
-        module->bufferMask = 0;
+    module->numBuffers = info.yres_virtual / ALIGN_PIXEL_128(info.yres);
+    module->bufferMask = 0;
 
-        void* vaddr = mmap(0, fbSize, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-        if (vaddr == MAP_FAILED) {
-            LOGE("Error mapping the framebuffer (%s)", strerror(errno));
-            return -errno;
-        }
-        module->framebuffer->base = intptr_t(vaddr);
-        module->framebuffer->phys = intptr_t(finfo.smem_start);
-        memset(vaddr, 0, fbSize);
-        return 0;
+    void* vaddr = mmap(0, fbSize, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    if (vaddr == MAP_FAILED)
+    {
+        LOGE("Error mapping the framebuffer (%s)", strerror(errno));
+        return -errno;
+    }
+    module->framebuffer->base = intptr_t(vaddr);
+    module->framebuffer->phys = intptr_t(finfo.smem_start);
+    memset(vaddr, 0, fbSize);
+    return 0;
 }
 
 static int mapFrameBuffer(struct private_module_t* module)
@@ -1139,543 +955,34 @@ static int mapFrameBuffer(struct private_module_t* module)
     return err;
 }
 
-#ifdef SECOND_DISPLAY_SUPPORT
-static int mapSecFrameBuffer(fb_context_t* ctx)
-{
-    int retCode = 0;
-    int sec_fp = 0,fp_property = 0;
-    size_t fbSize = 0;
-    int blank;
-    void* vaddr = NULL;
-    struct mxcfb_gbl_alpha gbl_alpha;
-    struct mxcfb_color_key key; 
-    char overlayStr[32], value[PROPERTY_VALUE_MAX];
-    int fb2_fp;
-    private_module_t* m = reinterpret_cast<private_module_t*>(
-        ctx->device.common.module);
-
-    set_graphics_fb_mode(1,1);
-
-    sec_fp = open("/dev/graphics/fb1",O_RDWR, 0);
-    if (sec_fp < 0){
-        LOGE("Error!Cannot open the /dev/graphics/fb1 for second display");
-        goto disp_init_error;
-    }
-
-    /*
-    * If we play video on the secondary display device only,
-    * switch overlay(IPU DP) to the secondary display FB
-    * after all FBs are blanked.
-    */
-    property_get("ro.SIN_VIDEO_DUAL_UI", value, "");
-    if (!strcmp(value, "1")) {
-        ctx->video_play_mode = SIN_VIDEO_DUAL_UI;
-
-        blank = FB_BLANK_NORMAL;
-
-        fb2_fp = open("/dev/graphics/fb2",O_RDWR, 0);
-        if (fb2_fp < 0){
-            LOGE("Error!Cannot open the /dev/graphics/fb2");
-            goto disp_init_error;
-        }
-        if(ioctl(fb2_fp, FBIOBLANK, blank) < 0) {
-            LOGI("Error!BLANK FB0 failed!\n");
-            goto disp_init_error;
-        }
-        close(fb2_fp);
-
-        if(ioctl(sec_fp, FBIOBLANK, blank) < 0) {
-            LOGI("Error!BLANK FB1 failed!\n");
-            goto disp_init_error;
-        }
-
-        if(ioctl(m->framebuffer->fd, FBIOBLANK, blank) < 0) {
-            LOGI("Error!BLANK FB0 failed!\n");
-            goto disp_init_error;
-        }
-
-        LOGI("Open fb0/fsl_disp_property");
-        fp_property = open("/sys/class/graphics/fb0/fsl_disp_property", O_RDWR, 0);
-        if(fp_property < 0) {
-            LOGI("Error!Cannot switch the overlay to second disp");
-            goto disp_init_error;
-        }
-
-        memset(overlayStr, 0 ,32);
-        strcpy(overlayStr, "1-layer-fb\n");
-        LOGI("WRITE 1-layer-fb to fb0/fsl_disp_property");
-        write(fp_property, overlayStr, strlen(overlayStr)+1);
-        close(fp_property);
-
-        blank = FB_BLANK_UNBLANK;
-        if(ioctl(m->framebuffer->fd, FBIOBLANK, blank) < 0) {
-            LOGI("Error!UNBLANK FB0 failed!\n");
-            goto disp_init_error;
-        }
-
-        key.enable = 1;
-        key.color_key = 0x00000000; // Black
-        LOGI("MXCFB_SET_CLR_KEY");
-        if( ioctl(sec_fp, MXCFB_SET_CLR_KEY, &key) < 0)
-        {
-            LOGE("Error!MXCFB_SET_CLR_KEY");
-            goto disp_init_error;
-        }
-
-        gbl_alpha.alpha = 255;
-        gbl_alpha.enable = 1;
-        LOGI("MXCFB_SET_GBL_ALPHA");
-        if(ioctl(sec_fp, MXCFB_SET_GBL_ALPHA, &gbl_alpha) <0)
-        {
-            LOGI("Error!MXCFB_SET_GBL_ALPHA error");
-            goto disp_init_error;
-        }
-    } else
-        ctx->video_play_mode = DUAL_VIDEO_SIN_UI;
-
-    blank = FB_BLANK_UNBLANK;
-    if(ioctl(sec_fp, FBIOBLANK, blank) < 0) {
-        LOGI("Error!UNBLANK FB1 failed!\n");
-        goto disp_init_error;
-    }
-
-    struct fb_fix_screeninfo finfo;
-    if (ioctl(sec_fp, FBIOGET_FSCREENINFO, &finfo) == -1)
-        goto disp_init_error;
-
-    struct fb_var_screeninfo info;
-    if (ioctl(sec_fp, FBIOGET_VSCREENINFO, &info) == -1)
-        goto disp_init_error;
-
-    LOGI("Second display: xres %d,yres %d, xres_virtual %d, yres_virtual %d",
-        info.xres,info.xres_virtual,info.yres,info.yres_virtual);
-
-    info.reserved[0] = 0;
-    info.reserved[1] = 0;
-    info.reserved[2] = 0;
-    info.xoffset = 0;
-    info.yoffset = 0;
-    info.activate = FB_ACTIVATE_NOW;
-
-    /*
-    * Explicitly request 5/6/5
-    */
-    info.bits_per_pixel = 16;
-    info.nonstd = 0;
-    info.red.offset     = 11;
-    info.red.length     = 5;
-    info.green.offset   = 5;
-    info.green.length   = 6;
-    info.blue.offset    = 0;
-    info.blue.length    = 5;
-    info.transp.offset  = 0;
-    info.transp.length  = 0;
-    info.yres_virtual = ALIGN_PIXEL_128(info.yres) * nr_framebuffers;
-    info.xres_virtual = ALIGN_PIXEL(info.xres);
-
-    if (ioctl(sec_fp, FBIOPUT_VSCREENINFO, &info) == -1) {
-        LOGE("Error!Second display FBIOPUT_VSCREENINFO");
-        goto disp_init_error;
-    }
-
-    if (ioctl(sec_fp, FBIOGET_VSCREENINFO, &info) == -1){
-        LOGE("Error!Second display FBIOGET_VSCREENINFO");
-        goto disp_init_error;
-    }
-
-    if (ioctl(sec_fp, FBIOGET_FSCREENINFO, &finfo) == -1){
-        LOGE("Error!Second display FBIOGET_FSCREENINFO");
-        goto disp_init_error;
-    }
-
-    if(finfo.smem_len <= 0)
-        goto disp_init_error;
-
-    fbSize = roundUpToPageSize(finfo.line_length * info.yres_virtual);  
-
-    vaddr = mmap(0, fbSize, PROT_READ|PROT_WRITE, MAP_SHARED, sec_fp, 0);
-    if (vaddr == MAP_FAILED) {
-        LOGE("Error!mapping the framebuffer (%s)", strerror(errno));
-        goto disp_init_error;
-    }
-
-    ctx->sec_disp_base = intptr_t(vaddr);
-    ctx->sec_disp_phys = intptr_t(finfo.smem_start);
-    memset(vaddr, 0, fbSize);
-    ctx->sec_fp = sec_fp;
-    ctx->sec_disp_w = info.xres;
-    ctx->sec_disp_h = info.yres;
-    ctx->sec_frame_size = fbSize/nr_framebuffers;
-    ctx->sec_disp_next_buf = ((info.yoffset * nr_framebuffers / info.yres_virtual) + 1) % nr_framebuffers;
-    ctx->sec_info = info;
-    ctx->sec_finfo = finfo;
-#if 0
-    struct fb_fix_screeninfo fb0_finfo;
-    if (ioctl(m->framebuffer->fd, FBIOGET_FSCREENINFO, &fb0_finfo) == -1)
-        goto disp_init_error;
-
-    struct fb_var_screeninfo fb0_info;
-    if (ioctl(m->framebuffer->fd, FBIOGET_VSCREENINFO, &fb0_info) == -1)
-        goto disp_init_error;
-
-    LOGI("fb0_info display: xres %d,yres %d, xres_virtual %d, yres_virtual %d",
-        fb0_info.xres,fb0_info.xres_virtual,
-        fb0_info.yres,fb0_info.yres_virtual);
-
-    fb0_info.reserved[0] = 0;
-    fb0_info.reserved[1] = 0;
-    fb0_info.reserved[2] = 0;
-    fb0_info.xoffset = 0;
-    fb0_info.yoffset = 0;
-    fb0_info.activate = FB_ACTIVATE_NOW;
-
-    /*
-    * Explicitly request 5/6/5
-    */
-    fb0_info.bits_per_pixel = 16;
-    fb0_info.nonstd = 0;
-    fb0_info.red.offset     = 11;
-    fb0_info.red.length     = 5;
-    fb0_info.green.offset   = 5;
-    fb0_info.green.length   = 6;
-    fb0_info.blue.offset    = 0;
-    fb0_info.blue.length    = 5;
-    fb0_info.transp.offset  = 0;
-    fb0_info.transp.length  = 0;
-    fb0_info.yres_virtual = ALIGN_PIXEL_128(fb0_info.yres) * nr_framebuffers;
-    fb0_info.xres_virtual = fb0_info.xres;
-#endif
-    if (ioctl(m->framebuffer->fd, FBIOPUT_VSCREENINFO, &m->info) == -1) {
-        LOGE("Error!Second display FBIOPUT_VSCREENINFO");
-        goto disp_init_error;
-    }
-
-    return 0;
-
-disp_init_error:
-    if(sec_fp) {
-        close(sec_fp);
-        sec_fp = 0;
-        ctx->sec_fp = 0;
-    }
-    return -1;
-}
-
-static int resizeToSecFrameBuffer(int base,int phys,fb_context_t* ctx)
-{
-    ipu_lib_input_param_t sIPUInputParam;   
-    ipu_lib_output_param_t sIPUOutputParam; 
-    ipu_lib_handle_t            sIPUHandle;
-    int iIPURet = 0;
-    memset(&sIPUInputParam,0,sizeof(sIPUInputParam));
-    memset(&sIPUOutputParam,0,sizeof(sIPUOutputParam));
-    memset(&sIPUHandle,0,sizeof(sIPUHandle));
-
-    //Setting input format
-    sIPUInputParam.width = ctx->device.width;
-    sIPUInputParam.height = ctx->device.height;
-
-    sIPUInputParam.input_crop_win.pos.x = 0;
-    sIPUInputParam.input_crop_win.pos.y = 0;  
-    sIPUInputParam.input_crop_win.win_w = ctx->device.width;
-    sIPUInputParam.input_crop_win.win_h = ctx->device.height;
-    sIPUInputParam.fmt = v4l2_fourcc('R', 'G', 'B', 'P');
-    sIPUInputParam.user_def_paddr[0] = phys;
-
-    //Setting output format
-    //Should align with v4l
-    sIPUOutputParam.fmt = v4l2_fourcc('R', 'G', 'B', 'P');
-    sIPUOutputParam.width = ctx->sec_disp_w;
-    sIPUOutputParam.height = ctx->sec_disp_h;   
-    sIPUOutputParam.show_to_fb = 0;
-    //Output param should be same as input, since no resize,crop
-    sIPUOutputParam.output_win.pos.x = 0;
-    sIPUOutputParam.output_win.pos.y = 0;
-    sIPUOutputParam.output_win.win_w = ctx->sec_disp_w;
-    sIPUOutputParam.output_win.win_h = ctx->sec_disp_h;
-
-    int output_w = 0;
-    int output_h = 0;
-    //Make sure the output w/h proportion is align with the primary display
-    if((ctx->sec_rotation == 0x0)||(ctx->sec_rotation == 0x3))
-    {
-        if(ctx->sec_disp_w/ctx->sec_disp_h >= ctx->device.width/ctx->device.height){
-            sIPUOutputParam.output_win.win_h = ctx->sec_disp_h > MAX_SEC_DISP_HEIGHT?MAX_SEC_DISP_HEIGHT:ctx->sec_disp_h;
-            sIPUOutputParam.output_win.win_w = ctx->sec_disp_h*ctx->device.width/ctx->device.height;
-        }
-        else{
-            sIPUOutputParam.output_win.win_w = ctx->sec_disp_w > MAX_SEC_DISP_WIDTH?MAX_SEC_DISP_WIDTH:ctx->sec_disp_w;
-            sIPUOutputParam.output_win.win_h = ctx->sec_disp_w*ctx->device.height/ctx->device.width;
-        }
-    }
-    else{
-        if(ctx->sec_disp_w/ctx->sec_disp_h >= ctx->device.height/ctx->device.width){
-            sIPUOutputParam.output_win.win_h = ctx->sec_disp_h > MAX_SEC_DISP_HEIGHT?MAX_SEC_DISP_HEIGHT:ctx->sec_disp_h;
-            sIPUOutputParam.output_win.win_w = ctx->sec_disp_h*ctx->device.height/ctx->device.width;
-        }
-        else{
-            sIPUOutputParam.output_win.win_w = ctx->sec_disp_w > MAX_SEC_DISP_WIDTH?MAX_SEC_DISP_WIDTH:ctx->sec_disp_w;
-            sIPUOutputParam.output_win.win_h = ctx->sec_disp_w*ctx->device.width/ctx->device.height;
-        }
-    }
-    sIPUOutputParam.output_win.pos.x = (ctx->sec_disp_w - sIPUOutputParam.output_win.win_w)/2;
-    sIPUOutputParam.output_win.pos.y = (ctx->sec_disp_h - sIPUOutputParam.output_win.win_h)/2;
-
-
-    //sIPUOutputParam.rot = 0;
-    sIPUOutputParam.rot = ctx->sec_rotation;
-    //LOGI("Sec Rotation %d",ctx->sec_rotation);
-
-    sIPUOutputParam.user_def_paddr[0] = ctx->sec_disp_phys + ctx->sec_disp_next_buf*ctx->sec_frame_size;
-    //LOGI("Output param: width %d,height %d, pos.x %d, pos.y %d,win_w %d,win_h %d,rot %d",
-    //sIPUOutputParam.width,
-    //sIPUOutputParam.height,
-    //sIPUOutputParam.output_win.pos.x,
-    //sIPUOutputParam.output_win.pos.y,
-    //sIPUOutputParam.output_win.win_w,
-    //sIPUOutputParam.output_win.win_h,
-    //sIPUOutputParam.rot);
-
-    //LOGI("Input param: width %d, height %d, fmt %d, crop_win pos x %d, crop_win pos y %d, crop_win win_w %d,crop_win win_h %d",
-    //sIPUInputParam.width,
-    //sIPUInputParam.height,
-    //sIPUInputParam.fmt,
-    //sIPUInputParam.input_crop_win.pos.x,
-    //sIPUInputParam.input_crop_win.pos.y,
-    //sIPUInputParam.input_crop_win.win_w,
-    //sIPUInputParam.input_crop_win.win_h);     
-
-    iIPURet =  mxc_ipu_lib_task_init(&sIPUInputParam,NULL,&sIPUOutputParam,OP_NORMAL_MODE|TASK_VF_MODE,&sIPUHandle);
-    if (iIPURet < 0) {
-        LOGE("Error!mxc_ipu_lib_task_init failed mIPURet %d!",iIPURet);
-        return -1;
-    }  
-    //LOGI("mxc_ipu_lib_task_init success");
-    iIPURet = mxc_ipu_lib_task_buf_update(&sIPUHandle,phys,sIPUOutputParam.user_def_paddr[0],NULL,NULL,NULL);
-    if (iIPURet < 0) {
-        LOGE("Error!mxc_ipu_lib_task_buf_update failed mIPURet %d!",iIPURet);
-        mxc_ipu_lib_task_uninit(&sIPUHandle);
-        return -1;
-    }
-    //LOGI("mxc_ipu_lib_task_buf_update success");
-    mxc_ipu_lib_task_uninit(&sIPUHandle);
-
-    return 0;
-}
-
-/** convert HAL_PIXEL_FORMAT to C2D format */
-static C2D_COLORFORMAT get_format(int format) {
-    switch (format) {
-    case HAL_PIXEL_FORMAT_BGRA_8888:   return C2D_COLOR_8888;
-    case HAL_PIXEL_FORMAT_RGB_565:     return C2D_COLOR_0565;
-    default:                           return C2D_COLOR_0565;
-    }
-}
-
-/** get  pixelbit from HAL_PIXEL_FORMAT format */
-static int get_pixelbit(int format) {
-    switch (format) {
-    case HAL_PIXEL_FORMAT_BGRA_8888:   return 32;
-    case HAL_PIXEL_FORMAT_RGB_565:     return 16;
-    default:                           return 16;
-    }
-}
-
-static int resizeToSecFrameBuffer_c2d(int base,int phys,fb_context_t* ctx)
-{
-    C2D_SURFACE_DEF srcSurfaceDef;
-    C2D_SURFACE_DEF dstSurfaceDef;
-    C2D_SURFACE srcSurface;
-    C2D_SURFACE dstSurface; 
-    C2D_RECT dstRect;
-
-    if(!ctx || !ctx->c2dctx) return -1;
-
-    srcSurfaceDef.format = get_format(ctx->device.format);
-    srcSurfaceDef.width =  ctx->device.width;
-    srcSurfaceDef.height = ctx->device.height;
-
-    //make sure stride is 32 pixel aligned
-    srcSurfaceDef.stride = ((ctx->device.width + 31) & ~31)*get_pixelbit(ctx->device.format)>>3;
-
-    srcSurfaceDef.buffer = (void *)phys;
-    srcSurfaceDef.host = (void *)base;
-    srcSurfaceDef.flags = C2D_SURFACE_NO_BUFFER_ALLOC;
-
-    if (c2dSurfAlloc(ctx->c2dctx, &srcSurface, &srcSurfaceDef) != C2D_STATUS_OK)
-    {
-        LOGE("srcSurface c2dSurfAlloc fail");
-        return -EINVAL;
-    }
-
-    dstSurfaceDef.format = get_format(HAL_PIXEL_FORMAT_RGB_565);
-    dstSurfaceDef.width =  ctx->sec_disp_w;
-    dstSurfaceDef.height = ctx->sec_disp_h;
-
-    //make sure stride is 32 pixel aligned
-    dstSurfaceDef.stride = ((ctx->sec_disp_w + 31) & ~31)*get_pixelbit(HAL_PIXEL_FORMAT_RGB_565)>>3;
-
-    dstSurfaceDef.buffer = (void *)ctx->sec_disp_phys + ctx->sec_disp_next_buf*ctx->sec_frame_size;
-    dstSurfaceDef.host = (void *)ctx->sec_disp_base + ctx->sec_disp_next_buf*ctx->sec_frame_size;
-    dstSurfaceDef.flags = C2D_SURFACE_NO_BUFFER_ALLOC;
-
-    dstRect.x = dstRect.y = 0;
-    dstRect.width = dstSurfaceDef.width;
-    dstRect.height = dstSurfaceDef.height;
-
-    if((ctx->mRotate == 0)||(ctx->mRotate == 180))
-    {
-        if(ctx->sec_disp_w >= ctx->sec_disp_h*ctx->device.width/ctx->device.height){
-            dstRect.width = ctx->sec_disp_h*ctx->device.width/ctx->device.height;
-        }
-        else{
-            dstRect.height = ctx->sec_disp_w*ctx->device.height/ctx->device.width;
-        }
-    }
-    else{
-        if(ctx->sec_disp_w >= ctx->sec_disp_h*ctx->device.height/ctx->device.width){
-            dstRect.width = ctx->sec_disp_h*ctx->device.height/ctx->device.width;
-        }
-        else{
-            dstRect.height = ctx->sec_disp_w*ctx->device.width/ctx->device.height;
-        }
-    }
-
-    dstRect.x = (ctx->sec_disp_w - dstRect.width)/2;
-    dstRect.y = (ctx->sec_disp_h - dstRect.height)/2;
-
-    if (c2dSurfAlloc(ctx->c2dctx, &dstSurface, &dstSurfaceDef) != C2D_STATUS_OK)
-    {
-        LOGE("dstSurface c2dSurfAlloc fail");
-        c2dSurfFree(ctx->c2dctx, srcSurface);
-        return -EINVAL;
-    }
-
-    c2dSetSrcSurface(ctx->c2dctx, srcSurface);
-    c2dSetDstSurface(ctx->c2dctx, dstSurface); 
-    c2dSetSrcRotate(ctx->c2dctx, ctx->mRotate);
-
-    c2dSetStretchMode(ctx->c2dctx, C2D_STRETCH_BILINEAR_SAMPLING);
-    c2dSetBlendMode(ctx->c2dctx, C2D_ALPHA_BLEND_NONE);         
-    c2dSetDither(ctx->c2dctx, 0); 
-
-    c2dSetDstRectangle(ctx->c2dctx, &dstRect);
-    c2dDrawBlit(ctx->c2dctx); 
-
-    c2dFinish(ctx->c2dctx);
-    c2dSurfFree(ctx->c2dctx, srcSurface);
-    c2dSurfFree(ctx->c2dctx, dstSurface);
-
-    return 0;
-}
-
-void * secDispShowFrames(void * arg)
-{
-    private_module_t* m = NULL;
-    private_handle_t const* hnd = NULL;
-    fb_context_t* ctx = (fb_context_t*)arg;
-    char value[PROPERTY_VALUE_MAX];
-    bool update_sec_fb = true;
-
-    while(1)
-    {
-        sem_wait(&ctx->sec_display_begin);
-
-        if(!ctx->sec_display_inited)
-        {
-            sem_post(&ctx->sec_display_end);
-            break;
-        }
-
-        property_get("sys.VIDEO_PLAYING", value, "0");
-        if (!strcmp(value, "1"))
-        {
-            property_get("ro.secfb.disable-overlay", value, "0");
-            if (!strcmp(value, "1"))
-                update_sec_fb = false;
-            if (ctx->video_play_mode == DUAL_VIDEO_SIN_UI)
-                update_sec_fb = false;
-
-            if (!update_sec_fb) {
-                sem_post(&ctx->sec_display_end);
-                continue;
-            }
-        } else
-            update_sec_fb = true;
-
-        if (!update_sec_fb)
-        {
-            if(ctx->cleancount)
-            {
-                sem_post(&ctx->sec_display_end);
-                continue;
-            }
-
-            ctx->cleancount++;
-            memset((void *)ctx->sec_disp_base, 0, ctx->sec_frame_size*nr_framebuffers);
-        }
-        else
-        {
-            ctx->cleancount = 0;
-        }
-
-        if(!ctx->cleancount)
-        {
-            hnd = reinterpret_cast<private_handle_t const*>(ctx->buffer);
-            m = reinterpret_cast<private_module_t*>(ctx->dev->common.module);
-
-            if(ctx->c2dctx != NULL)
-            {
-                resizeToSecFrameBuffer_c2d(hnd->base,
-                    m->framebuffer->phys + hnd->base - m->framebuffer->base,
-                    ctx);
-            }
-            else
-            {
-                resizeToSecFrameBuffer(hnd->base,
-                    m->framebuffer->phys + hnd->base - m->framebuffer->base,
-                    ctx);
-            }
-        }
-
-        sem_post(&ctx->sec_display_end);
-
-        ctx->sec_info.yoffset = (ctx->sec_info.yres_virtual/nr_framebuffers) * ctx->sec_disp_next_buf;
-        ctx->sec_disp_next_buf = (ctx->sec_disp_next_buf + 1) % nr_framebuffers;
-        ctx->sec_info.activate = FB_ACTIVATE_VBL;
-
-        ioctl(ctx->sec_fp, FBIOPAN_DISPLAY, &ctx->sec_info);
-    }
-
-    return NULL;
-}
-
-#endif
 
 /*****************************************************************************/
-
 static int fb_close(struct hw_device_t *dev)
 {
     fb_context_t* ctx = (fb_context_t*)dev;
-    if (ctx) {
+    if (ctx)
+    {
         free(ctx);
     }
     return 0;
 }
 
-int fb_device_open(hw_module_t const* module, const char* name,
+int fb_device_open(hw_module_t const* module,
+                   const char* name,
                    hw_device_t** device)
 {
     int status = -EINVAL;
     char value[PROPERTY_VALUE_MAX];
 
-    if (!strcmp(name, GRALLOC_HARDWARE_FB0)) {
+    if (!strcmp(name, GRALLOC_HARDWARE_FB0))
+    {
         alloc_device_t* gralloc_device;
         framebuffer_device_t *fbdev;
 
         nr_framebuffers = NUM_BUFFERS;
         property_get("ro.product.device", value, "");
-        if (0 == strcmp(value, "imx50_rdp")) {
+        if (0 == strcmp(value, "imx50_rdp"))
+        {
             nr_framebuffers = 2;
             no_ipu = 1;
         }
@@ -1701,22 +1008,22 @@ int fb_device_open(hw_module_t const* module, const char* name,
         dev->device.setUpdateRect = fb_setUpdateRect;
 #endif
         dev->device.compositionComplete = fb_compositionComplete;
-#ifdef SECOND_DISPLAY_SUPPORT
-        dev->device.setSecRotation = fb_setSecRotation;
-#endif
 
         private_module_t* m = (private_module_t*)module;
         status = mapFrameBuffer(m);
-        if (status >= 0) {
+        if (status >= 0)
+        {
             int stride = m->finfo.line_length / (m->info.bits_per_pixel >> 3);
             const_cast<uint32_t&>(dev->device.flags) = 0xfb0;
             const_cast<uint32_t&>(dev->device.width) = m->info.xres;
             const_cast<uint32_t&>(dev->device.height) = m->info.yres;
             const_cast<int&>(dev->device.stride) = stride;
-            if(m->info.bits_per_pixel != 32) {
+            if(m->info.bits_per_pixel != 32)
+            {
                 const_cast<int&>(dev->device.format) = HAL_PIXEL_FORMAT_RGB_565;
             }
-            else{
+            else
+            {
                 const_cast<int&>(dev->device.format) = HAL_PIXEL_FORMAT_BGRA_8888;
             }
             const_cast<float&>(dev->device.xdpi) = m->xdpi;
