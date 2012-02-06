@@ -56,6 +56,17 @@ extern "C"
 #include "gralloc_priv.h"
 #include "gr.h"
 #define  MAX_RECT_NUM   20
+
+
+// freescale change log
+// 1. add fb_setUpdateRect to fb_post
+// 2. add update_to_display to fb_post
+// 3. init eink framebuffer
+
+// Onyx change log
+// 1. clean code, format the code according to onyx code style
+// 2. remove second display support
+
 /*****************************************************************************/
 
 // numbers of buffers for page flipping
