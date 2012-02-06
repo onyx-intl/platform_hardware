@@ -42,8 +42,9 @@
 #include <linux/videodev.h>
 #include <sys/mman.h>
 
-extern "C" {
-#include "mxc_ipu_hl_lib.h" 
+extern "C"
+{
+#include "mxc_ipu_hl_lib.h"
 } 
 
 #endif
@@ -60,17 +61,20 @@ extern "C" {
 // numbers of buffers for page flipping
 #define NUM_BUFFERS 3
 
-enum {
+enum
+{
     PAGE_FLIP = 0x00000001,
     LOCKED = 0x00000002
 };
 
-enum {
+enum
+{
     SIN_VIDEO_DUAL_UI,
     DUAL_VIDEO_SIN_UI
 };
 
-struct fb_context_t {
+struct fb_context_t
+{
     framebuffer_device_t  device;
 #ifdef FSL_EPDC_FB
     //Partial udate feature
@@ -156,9 +160,10 @@ void * secDispShowFrames(void * arg);
 
 #define EINK_DEFAULT_MODE            0x00000004
 
-__u32 marker_val = 1;
+
 static void update_to_display(int left, int top, int width, int height, int updatemode, int fb_dev)
 {
+    static __u32 marker_val = 1;
     struct mxcfb_update_data upd_data;
     int retval;
     bool wait_for_complete;
@@ -217,15 +222,19 @@ static void update_to_display(int left, int top, int width, int height, int upda
     upd_data.update_region.top = top;
     upd_data.update_region.height = height;
 
-    if (wait_for_complete) {
+    if (wait_for_complete)
+    {
         /* Get unique marker value */
         upd_data.update_marker = marker_val++;
-    } else {
+    }
+    else
+    {
         upd_data.update_marker = 0;
     }
 
     retval = ioctl(fb_dev, MXCFB_SEND_UPDATE, &upd_data);
-    while (retval < 0) {
+    while (retval < 0)
+    {
         /* We have limited memory available for updates, so wait and
         * then try again after some updates have completed */
         usleep(300000);
@@ -233,15 +242,15 @@ static void update_to_display(int left, int top, int width, int height, int upda
         LOGI("MXCFB_SEND_UPDATE  retval = 0x%x try again maybe", retval);
     }
 
-    if (wait_for_complete) {
+    if (wait_for_complete)
+    {
         /* Wait for update to complete */
         retval = ioctl(fb_dev, MXCFB_WAIT_FOR_UPDATE_COMPLETE, &upd_data.update_marker);
-        if (retval < 0) {
+        if (retval < 0)
+        {
             LOGI("Wait for update complete failed.  Error = 0x%x", retval);
         }
     }
-
-
 }
 #endif
 
@@ -264,7 +273,8 @@ sem_t * fslwatermark_sem_open()
     strcat(shm_file, "codec.shm");
 
     fd = open(shm_file, O_RDWR, 0666);
-    if (fd < 0) { 
+    if (fd < 0)
+    { 
         /* first thread/process need codec protection come here */
         fd = open(shm_file, O_RDWR | O_CREAT | O_EXCL, 0666);
         if(fd < 0)
@@ -287,10 +297,10 @@ sem_t * fslwatermark_sem_open()
         }
     }
     else
+    {
         pSem = (sem_t *)mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-
+    }
     close(fd);
-
     return pSem;
 }
 
@@ -346,7 +356,7 @@ static int fb_setSecRotation(struct framebuffer_device_t* dev,int secRotation)
 {
     fb_context_t* ctx = (fb_context_t*)dev;
     //LOGI("fb_setSecRotation %d",secRotation);
-    if((ctx->sec_rotation != secRotation)&&(ctx->sec_disp_base != 0))      
+    if((ctx->sec_rotation != secRotation)&&(ctx->sec_disp_base != 0))
         memset((void *)ctx->sec_disp_base, 0, ctx->sec_frame_size*nr_framebuffers);
     ctx->sec_rotation = secRotation;
     switch(secRotation)
@@ -382,12 +392,14 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
     private_handle_t const* hnd = reinterpret_cast<private_handle_t const*>(buffer);
     private_module_t* m = reinterpret_cast<private_module_t*>(
         dev->common.module);
-    if (m->currentBuffer) {
+    if (m->currentBuffer)
+    {
         m->base.unlock(&m->base, m->currentBuffer);
         m->currentBuffer = 0;
     }
 
-    if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
+    if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER)
+    {
 
         m->base.lock(&m->base, buffer, 
             private_module_t::PRIV_USAGE_LOCKED_FOR_POST, 
@@ -548,17 +560,18 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 #endif
 
 #ifdef FSL_EPDC_FB
-        if(ctx->rect_update) {
+        if(ctx->rect_update)
+        {
             for(int i=0; i < ctx->count; i++)
             {
                 update_to_display(ctx->partial_left[i],ctx->partial_top[i],
                     ctx->partial_width[i],ctx->partial_height[i],
                     ctx->updatemode[i],m->framebuffer->fd);
             }
-
             ctx->rect_update = false;
         }
-        else{
+        else
+        {
             update_to_display(0,0,m->info.xres,m->info.yres,EINK_DEFAULT_MODE,m->framebuffer->fd);
         }
 #endif
@@ -585,17 +598,18 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         memcpy(fb_vaddr, buffer_vaddr, m->finfo.line_length * ALIGN_PIXEL_128(m->info.yres));
 
 #ifdef FSL_EPDC_FB
-        if(ctx->rect_update) {
+        if(ctx->rect_update)
+        {
             for(int i=0; i < ctx->count; i++)
             {
                 update_to_display(ctx->partial_left[i],ctx->partial_top[i],
                     ctx->partial_width[i],ctx->partial_height[i],
                     ctx->updatemode[i],m->framebuffer->fd);
             }
-
             ctx->rect_update = false;
         }
-        else{
+        else
+        {
             update_to_display(0,0,m->info.xres,m->info.yres, EINK_DEFAULT_MODE ,m->framebuffer->fd);
         }
 #endif
@@ -641,7 +655,8 @@ static int str2int(char *p)
     return val;
 }
 
-typedef enum {
+typedef enum
+{
     CHECK_NEXT_STATE,
     FIND_WIDTH_STATE,
     FIND_JOINT_STATE,
