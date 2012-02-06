@@ -45,7 +45,7 @@
 extern "C"
 {
 #include "mxc_ipu_hl_lib.h"
-} 
+}
 
 #endif
 #include <GLES/gl.h>
@@ -181,9 +181,10 @@ static void update_to_display(int left, int top, int width, int height, int upda
     }
 
     retval = ioctl(fb_dev, MXCFB_SET_AUTO_UPDATE_MODE, &auto_update_mode);
-    if (retval < 0) {
+    if (retval < 0)
+    {
         LOGI("set auto update mode failed.  Error = 0x%x", retval);
-    }    
+    }
 
     upd_data.temp = 24; //the temperature is get from linux team
     upd_data.update_region.left = left;
@@ -243,7 +244,7 @@ sem_t * fslwatermark_sem_open()
 
     fd = open(shm_file, O_RDWR, 0666);
     if (fd < 0)
-    { 
+    {
         /* first thread/process need codec protection come here */
         fd = open(shm_file, O_RDWR | O_CREAT | O_EXCL, 0666);
         if(fd < 0)
@@ -252,7 +253,7 @@ sem_t * fslwatermark_sem_open()
         }
         ftruncate(fd, sizeof(sem_t));
 
-        /* map the semaphore variant in the file */ 
+        /* map the semaphore variant in the file */
         pSem = (sem_t *)mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if((void *)(-1) == pSem)
         {
@@ -275,7 +276,6 @@ sem_t * fslwatermark_sem_open()
 
 
 /*****************************************************************************/
-
 static int fb_setSwapInterval(struct framebuffer_device_t* dev,
                               int interval)
 {
@@ -376,20 +376,22 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
         m->currentBuffer = buffer;
 
-    } else {
+    }
+    else
+    {
         // If we can't do the page_flip, just copy the buffer to the front 
         // FIXME: use copybit HAL instead of memcpy
 
         void* fb_vaddr;
         void* buffer_vaddr;
 
-        m->base.lock(&m->base, m->framebuffer, 
-            GRALLOC_USAGE_SW_WRITE_RARELY, 
+        m->base.lock(&m->base, m->framebuffer,
+            GRALLOC_USAGE_SW_WRITE_RARELY,
             0, 0, ALIGN_PIXEL(m->info.xres), ALIGN_PIXEL_128(m->info.yres),
             &fb_vaddr);
 
-        m->base.lock(&m->base, buffer, 
-            GRALLOC_USAGE_SW_READ_RARELY, 
+        m->base.lock(&m->base, buffer,
+            GRALLOC_USAGE_SW_READ_RARELY,
             0, 0, ALIGN_PIXEL(m->info.xres), ALIGN_PIXEL_128(m->info.yres),
             &buffer_vaddr);
 
@@ -479,6 +481,7 @@ static int disp_mode_compare( const void *arg1, const void *arg2)
 
     return 1;
 }
+
 static char* find_available_mode(const char *mode_list, int dual_disp)
 {
     int disp_threshold = 0;
@@ -592,7 +595,8 @@ static int set_graphics_fb_mode(int fb, int dual_disp)
     if (strcmp(value, "1") != 0)  return 0;
 
     fp_cmd = open("/proc/cmdline",O_RDONLY, 0);
-    if(fp_cmd < 0) {
+    if(fp_cmd < 0)
+    {
         LOGI("Error! Cannot open /proc/cmdline");
         goto set_graphics_fb_mode_error;
     }
@@ -611,7 +615,8 @@ static int set_graphics_fb_mode(int fb, int dual_disp)
 
     sprintf(temp_name, "/sys/class/graphics/fb%d/modes", fb);
     fp_modes = open(temp_name,O_RDONLY, 0);
-    if(fp_modes < 0) {
+    if(fp_modes < 0)
+    {
         LOGI("Error! Cannot open %s", temp_name);
         goto set_graphics_fb_mode_error;
     }
