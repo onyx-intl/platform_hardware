@@ -344,6 +344,13 @@ private:
 // 
 static void onyx_display_update(int left, int top, int width, int height, int updatemode, int fb_dev, bool update)
 {
+    static UpdateHelper helper;
+
+    helper.merge(left, top, width, height, updatemode);
+    if (update)
+    {
+        helper.updateScreen(fb_dev);
+    }
 }
 
 #endif
@@ -477,7 +484,7 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
         if (ioctl(m->framebuffer->fd, FBIOPAN_DISPLAY, &m->info) == -1) {
             LOGE("FBIOPAN_DISPLAY failed");
-            m->base.unlock(&m->base, buffer); 
+            m->base.unlock(&m->base, buffer);
             return -errno;
         }
 
@@ -486,15 +493,15 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         {
             for(int i=0; i < ctx->count; i++)
             {
-                update_to_display(ctx->partial_left[i],ctx->partial_top[i],
+                onyx_display_update(ctx->partial_left[i],ctx->partial_top[i],
                     ctx->partial_width[i],ctx->partial_height[i],
-                    ctx->updatemode[i],m->framebuffer->fd);
+                    ctx->updatemode[i], m->framebuffer->fd, (i >= ctx->count - 1));
             }
             ctx->rect_update = false;
         }
         else
         {
-            update_to_display(0,0,m->info.xres,m->info.yres,EINK_DEFAULT_MODE,m->framebuffer->fd);
+            onyx_display_update(0, 0, m->info.xres, m->info.yres, EINK_DEFAULT_MODE, m->framebuffer->fd, true);
         }
 #endif
 
@@ -526,15 +533,15 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         {
             for(int i=0; i < ctx->count; i++)
             {
-                update_to_display(ctx->partial_left[i],ctx->partial_top[i],
+                onyx_display_update(ctx->partial_left[i],ctx->partial_top[i],
                     ctx->partial_width[i],ctx->partial_height[i],
-                    ctx->updatemode[i],m->framebuffer->fd);
+                    ctx->updatemode[i],m->framebuffer->fd, (i >= ctx->count - 1));
             }
             ctx->rect_update = false;
         }
         else
         {
-            update_to_display(0,0,m->info.xres,m->info.yres, EINK_DEFAULT_MODE ,m->framebuffer->fd);
+            onyx_display_update(0, 0, m->info.xres, m->info.yres, EINK_DEFAULT_MODE, m->framebuffer->fd, true);
         }
 #endif
 
