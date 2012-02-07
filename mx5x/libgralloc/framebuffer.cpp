@@ -139,6 +139,9 @@ static int no_ipu = 0;
 #define EINK_CONVERT_MODE_MASK       0x00000400
 
 #define EINK_DEFAULT_MODE            0x00000004
+#define ONYX_GC_MASK                 0x02000000
+#define ONYX_GC_MODE                 EINK_WAVEFORM_MODE_GC16|EINK_UPDATE_MODE_FULL|EINK_WAIT_MODE_WAIT
+#define ONYX_GU_MODE                 EINK_WAVEFORM_MODE_GC16|EINK_UPDATE_MODE_PARTIAL|EINK_WAIT_MODE_WAIT
 
 
 
@@ -240,7 +243,7 @@ static void update_to_display(int left, int top, int width, int height, int upda
 class UpdateHelper
 {
 public:
-    UpdateHelper() { clear(); gc_interval_ = -1;}
+    UpdateHelper() { clear(); clearGCInterval(); }
     ~UpdateHelper(){}
 
 public:
@@ -272,7 +275,22 @@ public:
 
     void updateScreen(int fb_dev)
     {
-        update_mode_ = waveform_|full_|waiting_;
+        if (gc_interval_ >= 0)
+        {
+            if (gu_count_++ < gc_interval_)
+            {
+                update_mode_ = ONYX_GU_MODE;
+            }
+            else
+            {
+                update_mode_ = ONYX_GC_MODE;
+                gu_count_ = 0;
+            }
+        }
+        else
+        {
+            update_mode_ = waveform_|full_|waiting_;
+        }
         update_to_display(left_, top_, width_, height_, update_mode_, fb_dev);
         clear();
     }
@@ -286,6 +304,12 @@ private:
         full_ = EINK_UPDATE_MODE_PARTIAL;
         waiting_ = EINK_WAIT_MODE_NOWAIT;
         update_mode_ = EINK_DEFAULT_MODE;
+    }
+
+    void clearGCInterval()
+    {
+        gc_interval_ = -1;
+        gu_count_ = 0;
     }
 
     int waveform(int index)
@@ -326,10 +350,19 @@ private:
 
     void checkGCInterval(int mode)
     {
-        int value = mode;
+        if (mode & ONYX_GC_MASK)
+        {
+            gc_interval_ = mode & 0x02ff0000;
+            gu_count_ = 0;
+        }
+        else
+        {
+            clearGCInterval();
+        }
     }
 
 private:
+    int gu_count_;
     int gc_interval_;
     int left_, top_, width_, height_;
     int waveform_;
