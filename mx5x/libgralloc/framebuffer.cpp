@@ -141,6 +141,8 @@ static int no_ipu = 0;
 #define EINK_DEFAULT_MODE            0x00000004
 
 
+
+
 static void update_to_display(int left, int top, int width, int height, int updatemode, int fb_dev)
 {
     static __u32 marker_val = 1;
@@ -233,6 +235,117 @@ static void update_to_display(int left, int top, int width, int height, int upda
         }
     }
 }
+
+
+class UpdateHelper
+{
+public:
+    UpdateHelper() { clear(); gc_interval_ = -1;}
+    ~UpdateHelper(){}
+
+public:
+    void merge(int left, int top, int width, int height, int mode)
+    {
+        if (left < left_)
+        {
+            left_ = left;
+        }
+        if (top < top_)
+        {
+            top_ = top;
+        }
+        if (width > width_)
+        {
+            width_ = width;
+        }
+        if (height > height_)
+        {
+            height_ = height;
+        }
+
+        // check waveform, gc interval, waiting mode
+        checkWaveform(mode);
+        checkType(mode);
+        checkWaiting(mode);
+        checkGCInterval(mode);
+    }
+
+    void updateScreen(int fb_dev)
+    {
+        update_mode_ = waveform_|full_|waiting_;
+        update_to_display(left_, top_, width_, height_, update_mode_, fb_dev);
+        clear();
+    }
+
+private:
+    void clear()
+    {
+        left_ = top_ = INT_MAX;
+        width_ = height_ = 0;
+        waveform_ = EINK_WAVEFORM_MODE_AUTO;
+        full_ = EINK_UPDATE_MODE_PARTIAL;
+        waiting_ = EINK_WAIT_MODE_NOWAIT;
+        update_mode_ = EINK_DEFAULT_MODE;
+    }
+
+    int waveform(int index)
+    {
+        // init, du, gc16, gc4, auto
+        static const int data [] = {4, 0, 3, 2, 1};
+        return data[index];
+    }
+
+    void checkWaveform(int mode)
+    {
+        int index = mode & EINK_WAVEFORM_MODE_MASK;
+        int nw = wavefrom(index);
+        if (nw > waveform_)
+        {
+            waveform_ = nw;
+        }
+    }
+
+    // full or partial update.
+    void checkType(int mode)
+    {
+        int value = mode & EINK_UPDATE_MODE_MASK;
+        if (value > full_)
+        {
+            full_ = value;
+        }
+    }
+
+    void checkWaiting(int mode)
+    {
+        int value = mode & EINK_WAIT_MODE_MASK;
+        if (value > waiting_)
+        {
+            waiting_ = value;
+        }
+    }
+
+    void checkGCInterval(int mode)
+    {
+        int value = mode;
+    }
+
+private:
+    int gc_interval_;
+    int left_, top_, width_, height_;
+    int waveform_;
+    int full_;
+    int waiting_;
+    int update_mode_;
+};
+
+// Merge all display update requests
+// Merge display region
+// Merge update mode
+// 
+static void onyx_display_update(int left, int top, int width, int height, int updatemode, int fb_dev, bool update)
+{
+}
+
 #endif
 
 
