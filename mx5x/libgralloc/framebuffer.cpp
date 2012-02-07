@@ -298,7 +298,7 @@ private:
     void checkWaveform(int mode)
     {
         int index = mode & EINK_WAVEFORM_MODE_MASK;
-        int nw = wavefrom(index);
+        int nw = waveform(index);
         if (nw > waveform_)
         {
             waveform_ = nw;
