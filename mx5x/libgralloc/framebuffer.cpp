@@ -1134,7 +1134,7 @@ int fb_device_open(hw_module_t const* module,
 #ifndef FSL_EPDC_FB
         dev->device.setUpdateRect = 0;
 #else
-        dev->device.setUpdateRect = fb_setUpdateRect;
+        dev->device.setUpdateRect = fb_setUpdateRect; // used by native window
 #endif
         dev->device.compositionComplete = fb_compositionComplete;
 
