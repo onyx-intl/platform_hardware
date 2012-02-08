@@ -140,6 +140,7 @@ static int no_ipu = 0;
 
 #define EINK_DEFAULT_MODE            0x00000004
 #define ONYX_GC_MASK                 0x02000000
+#define ONYX_AUTO_MASK               0x01000000
 #define ONYX_GC_MODE                 EINK_WAVEFORM_MODE_GC16|EINK_UPDATE_MODE_FULL|EINK_WAIT_MODE_WAIT
 #define ONYX_GU_MODE                 EINK_WAVEFORM_MODE_GC16|EINK_UPDATE_MODE_PARTIAL|EINK_WAIT_MODE_WAIT
 
@@ -355,7 +356,7 @@ private:
             gc_interval_ = ((mode & 0x00ff0000) >> 16);
             gu_count_ = 0;
         }
-        else
+        else if (mode & ONYX_AUTO_MASK)
         {
             clearGCInterval();
         }
