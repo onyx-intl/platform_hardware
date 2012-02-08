@@ -352,7 +352,7 @@ private:
     {
         if (mode & ONYX_GC_MASK)
         {
-            gc_interval_ = mode & 0x02ff0000;
+            gc_interval_ = ((mode & 0x00ff0000) >> 16);
             gu_count_ = 0;
         }
         else
