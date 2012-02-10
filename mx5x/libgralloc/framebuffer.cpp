@@ -110,6 +110,11 @@ static int no_ipu = 0;
 //#define WAVEFORM_MODE_AUTO                    257  // defined in mxcfb.h
 
 
+        waveform_ = EINK_WAVEFORM_MODE_AUTO;
+        full_ = EINK_UPDATE_MODE_PARTIAL;
+        waiting_ = EINK_WAIT_MODE_NOWAIT;
+
+
 #define EINK_WAVEFORM_MODE_INIT      0x00000000
 #define EINK_WAVEFORM_MODE_DU        0x00000001
 #define EINK_WAVEFORM_MODE_GC16      0x00000002
@@ -316,20 +321,28 @@ private:
         gu_count_ = 0;
     }
 
-    int waveform(int index)
+    int priority(int index)
     {
         // init, du, gc16, gc4, auto
-        static const int data [] = {4, 0, 3, 2, 1};
+        static const int data [] = {4, 1, 3, 2, 0};
         return data[index];
     }
 
+    // check waveform.
+    //#define EINK_WAVEFORM_MODE_INIT      0x00000000
+    //#define EINK_WAVEFORM_MODE_DU        0x00000001
+    //#define EINK_WAVEFORM_MODE_GC16      0x00000002
+    //#define EINK_WAVEFORM_MODE_GC4       0x00000003
+    //#define EINK_WAVEFORM_MODE_AUTO      0x00000004
     void checkWaveform(int mode)
     {
-        int index = mode & EINK_WAVEFORM_MODE_MASK;
-        int nw = waveform(index);
-        if (nw > waveform_)
+        int index = (mode & EINK_WAVEFORM_MODE_MASK);
+        int current = (waveform_ & EINK_WAVEFORM_MODE_MASK);
+        int pn = priority(index);
+        int pc = priority(current);
+        if (pn > pc)
         {
-            waveform_ = nw;
+            waveform_ = (mode & EINK_WAVEFORM_MODE_MASK);
         }
     }
 
