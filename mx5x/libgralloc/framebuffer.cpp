@@ -277,7 +277,7 @@ public:
 
     void updateScreen(int fb_dev)
     {
-        if (gc_interval_ >= 0)
+        if (gc_interval_ >= 0 && waveform_ == EINK_WAVEFORM_MODE_AUTO)
         {
             if (gu_count_++ < gc_interval_)
             {
