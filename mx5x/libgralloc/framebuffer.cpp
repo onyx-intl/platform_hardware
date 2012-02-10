@@ -109,12 +109,6 @@ static int no_ipu = 0;
 #define WAVEFORM_MODE_GC4                       0x3   //
 //#define WAVEFORM_MODE_AUTO                    257  // defined in mxcfb.h
 
-
-        waveform_ = EINK_WAVEFORM_MODE_AUTO;
-        full_ = EINK_UPDATE_MODE_PARTIAL;
-        waiting_ = EINK_WAIT_MODE_NOWAIT;
-
-
 #define EINK_WAVEFORM_MODE_INIT      0x00000000
 #define EINK_WAVEFORM_MODE_DU        0x00000001
 #define EINK_WAVEFORM_MODE_GC16      0x00000002
