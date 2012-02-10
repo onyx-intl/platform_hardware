@@ -250,6 +250,7 @@ public:
 public:
     void merge(int left, int top, int width, int height, int mode)
     {
+        LOGI("merge update request: (%d, %d) -- (%d, %d) -- %d\n", left, top, width, height, mode);
         if (left < left_)
         {
             left_ = left;
@@ -272,6 +273,7 @@ public:
         checkType(mode);
         checkWaiting(mode);
         checkGCInterval(mode);
+        LOGI("merge result: (%d, %d) -- (%d, %d) -- %d\n", left_, top_, width_, height_, update_mode_);
     }
 
     void updateScreen(int fb_dev)
@@ -292,6 +294,7 @@ public:
         {
             update_mode_ = waveform_|full_|waiting_;
         }
+        LOGI("onyx_display_update: (%d, %d) -- (%d, %d) -- %d\n", left_, top_, width_, height_, update_mode_);
         update_to_display(left_, top_, width_, height_, update_mode_, fb_dev);
         clear();
     }
