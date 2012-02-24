@@ -365,10 +365,12 @@ private:
         {
             gc_interval_ = ((mode & 0x00ff0000) >> 16);
             gu_count_ = 0;
+            LOGI("GCInterval policy: %d\n", gc_interval_);
         }
         else if (mode & ONYX_AUTO_MASK)
         {
             clearGCInterval();
+            LOGI("Automatic policy.\n");
         }
     }
 
