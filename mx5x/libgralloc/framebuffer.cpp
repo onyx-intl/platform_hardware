@@ -155,7 +155,7 @@ static void update_to_display(int left, int top, int width, int height, int upda
     int auto_update_mode = AUTO_UPDATE_MODE_REGION_MODE;
     memset(&upd_data, 0, sizeof(mxcfb_update_data));
 
-    LOGI("update_to_display:left=%d, top=%d, width=%d, height=%d updatemode=%d\n", left, top, width, height,updatemode);
+    LOGI("update_to_display:left=%d, top=%d, width=%d, height=%d updatemode=0x%x\n", left, top, width, height,updatemode);
 
 
     if((updatemode & EINK_WAVEFORM_MODE_MASK) == EINK_WAVEFORM_MODE_DU)
@@ -249,7 +249,7 @@ public:
 public:
     void merge(int left, int top, int width, int height, int mode)
     {
-        LOGI("merge update request: (%d, %d) -- (%d, %d) -- %d\n", left, top, width, height, mode);
+        LOGI("merge update request: (%d, %d) -- (%d, %d) -- 0x%x\n", left, top, width, height, mode);
         if (left < left_)
         {
             left_ = left;
@@ -272,7 +272,7 @@ public:
         checkType(mode);
         checkWaiting(mode);
         checkGCInterval(mode);
-        LOGI("merge result: (%d, %d) -- (%d, %d) -- %d\n", left_, top_, width_, height_, update_mode_);
+        LOGI("merge result: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, width_, height_, update_mode_);
     }
 
     void updateScreen(int fb_dev)
@@ -293,7 +293,7 @@ public:
         {
             update_mode_ = waveform_|full_|waiting_;
         }
-        LOGI("onyx_display_update: (%d, %d) -- (%d, %d) -- %d\n", left_, top_, width_, height_, update_mode_);
+        LOGI("onyx_display_update: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, width_, height_, update_mode_);
         update_to_display(left_, top_, width_, height_, update_mode_, fb_dev);
         clear();
     }
