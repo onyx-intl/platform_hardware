@@ -281,16 +281,19 @@ public:
         {
             if (gu_count_++ < gc_interval_)
             {
+                LOGI("onyx_display_update: ONYX_GU_MODE\n");
                 update_mode_ = ONYX_GU_MODE;
             }
             else
             {
+                LOGI("onyx_display_update: ONYX_GC_MODE\n");
                 update_mode_ = ONYX_GC_MODE;
                 gu_count_ = 0;
             }
         }
         else
         {
+            LOGI("onyx_display_update: waveform: 0x%x, full: 0x%x, waiting: 0x%x\n", waveform_, full_, waiting_);
             update_mode_ = waveform_|full_|waiting_;
         }
         LOGI("onyx_display_update: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, width_, height_, update_mode_);
