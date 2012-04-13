@@ -258,13 +258,15 @@ public:
         {
             top_ = top;
         }
-        if (width > width_)
+        int right = left + width;
+        if (right > right_) 
         {
-            width_ = width;
+            right_ = right;
         }
-        if (height > height_)
+        int bottom = top + height;
+        if (bottom > bottom_)
         {
-            height_ = height;
+            bottom_ = bottom;
         }
 
         // check waveform, gc interval, waiting mode
@@ -272,7 +274,7 @@ public:
         checkType(mode);
         checkWaiting(mode);
         checkGCInterval(mode);
-        LOGI("merge result: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, width_, height_, update_mode_);
+        LOGI("merge result: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, right, bottom, update_mode_);
     }
 
     void updateScreen(int fb_dev)
@@ -296,8 +298,8 @@ public:
             LOGI("onyx_display_update: waveform: 0x%x, full: 0x%x, waiting: 0x%x\n", waveform_, full_, waiting_);
             update_mode_ = waveform_|full_|waiting_;
         }
-        LOGI("onyx_display_update: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, width_, height_, update_mode_);
-        update_to_display(left_, top_, width_, height_, update_mode_, fb_dev);
+        LOGI("onyx_display_update: (%d, %d) -- (%d, %d) -- 0x%x\n", left_, top_, right_, bottom_, update_mode_);
+        update_to_display(left_, top_, right_ - left_, bottom_ - top_, update_mode_, fb_dev);
         clear();
     }
 
@@ -305,7 +307,7 @@ private:
     void clear()
     {
         left_ = top_ = INT_MAX;
-        width_ = height_ = 0;
+        right_ = bottom_ = -1;
         waveform_ = EINK_WAVEFORM_MODE_AUTO;
         full_ = EINK_UPDATE_MODE_PARTIAL;
         waiting_ = EINK_WAIT_MODE_NOWAIT;
@@ -380,7 +382,7 @@ private:
 private:
     int gu_count_;
     int gc_interval_;
-    int left_, top_, width_, height_;
+    int left_, top_, right_, bottom_;
     int waveform_;
     int full_;
     int waiting_;
