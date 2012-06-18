@@ -28,6 +28,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pthread.h>
+#include <linux/delay.h>
+#include "cutils/properties.h"
 
 #define LOG_TAG "power"
 #include <utils/Log.h>
@@ -59,6 +61,7 @@ const char * const NEW_PATHS[] = {
 
 const char * const DVFS_CORE_EN_PATH = "/sys/devices/platform/mxc_dvfs_core.0/enable";
 const char * const BUSFREQ_EN_PATH = "/sys/devices/platform/busfreq.0/enable";
+static const char SUPP_PROP_NAME[]      = "init.svc.wpa_supplicant";
 
 const char * const AUTO_OFF_TIMEOUT_DEV = "/sys/android_power/auto_off_timeout";
 
@@ -172,27 +175,58 @@ set_screen_state(int on)
     QEMU_FALLBACK(set_screen_state(on));
 
     LOGI("*** set_screen_state %d", on);
+    char supp_status[PROPERTY_VALUE_MAX] = {'\0'};
 
     initialize_fds();
 
     //LOGI("go_to_sleep eventTime=%lld now=%lld g_error=%s\n", eventTime,
-      //      systemTime(), strerror(g_error));
+    //      systemTime(), strerror(g_error));
 
     if (g_error) return g_error;
 
     char buf[32];
     int len;
+    int count = 0;
     if (on == 1) {
         len = sprintf(buf, "%s", on_state);
         len = write(g_fds[REQUEST_STATE], buf, len);
         if (len < 0)
             LOGE("Failed setting last user activity: g_error=%d\n", g_error);
+        if (property_get(SUPP_PROP_NAME, supp_status, NULL)
+                && strcmp(supp_status, "running") == 0) {
+            property_set("ctl.start", "wlan_tool:load");
+            LOGI("*** wlan_tool:load ");
+        }
     } else if(on == 0){
+        if (property_get(SUPP_PROP_NAME, supp_status, NULL)
+                && strcmp(supp_status, "running") == 0) {
+            property_set("ctl.start", "wlan_tool:unload");
+            LOGI("*** wlan_tool:unload ");
+            while(count < 1000){
+            usleep(10000);
+            if (property_get("wlan.driver.status", supp_status, NULL)
+                && strcmp(supp_status, "unloaded") == 0)
+                break;
+            count++;
+            }
+        }
         len = sprintf(buf, "%s", off_state);
         len = write(g_fds[REQUEST_STATE], buf, len);
         if (len < 0)
             LOGE("Failed setting last user activity: g_error=%d\n", g_error);
     }else if(on == 2){
+        if (property_get(SUPP_PROP_NAME, supp_status, NULL)
+                && strcmp(supp_status, "running") == 0) {
+            property_set("ctl.start", "wlan_tool:unload");
+            LOGI("*** wlan_tool:unload ");
+            while(count < 1000){
+            usleep(10000);
+            if (property_get("wlan.driver.status", supp_status, NULL)
+                && strcmp(supp_status, "unloaded") == 0)
+                break;
+            count++;
+            }
+        }
         len = sprintf(buf, "%s", eink_state);
         len = write(g_fds[REQUEST_STATE], buf, len);
         if (len < 0)
