@@ -194,8 +194,15 @@ set_screen_state(int on)
             LOGE("Failed setting last user activity: g_error=%d\n", g_error);
         if (property_get(SUPP_PROP_NAME, supp_status, NULL)
                 && strcmp(supp_status, "running") == 0) {
-            property_set("ctl.start", "wlan_tool:load");
             LOGI("*** wlan_tool:load ");
+            while(count < 100){
+                property_set("ctl.start", "wlan_tool:load");
+                usleep(100000);
+                if (property_get("wlan.driver.status", supp_status, NULL)
+                        && strcmp(supp_status, "ok") == 0)
+                    break;
+                count++;
+            }
         }
     } else if(on == 0){
         if (property_get(SUPP_PROP_NAME, supp_status, NULL)
