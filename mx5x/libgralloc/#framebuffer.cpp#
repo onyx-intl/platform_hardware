@@ -52,7 +52,7 @@
 #include <hardware/DisplayCommand.h>
 #include "gralloc_priv.h"
 #include <utils/String8.h>
-#include <hardware/XmlTool.h>
+
 /*****************************************************************************/
 #define  MAX_RECT_NUM   20
 
@@ -239,7 +239,7 @@ static void update_to_display(int left, int top, int width, int height, int upda
 #endif
 
 static int nr_framebuffers;
-static android::XmlTool* g_xmltool = NULL;
+
 static int primary_display_type = 0;
 
 sem_t * fslwatermark_sem_open()
@@ -474,15 +474,8 @@ static int set_graphics_fb_mode(int fb, struct configParam* param, int *pColorde
             LOGI("open or read /sys/class/graphics/fb0/fsl_disp_dev_property failed");
         }
 
-        if(g_xmltool == NULL) {
-            g_xmltool = new android::XmlTool(FSL_SETTINGS_PREFERENCE);
-            if(g_xmltool == NULL) {
-                LOGE("Error: g_xmltool not created");
-                return -1;
-            }
-        }
-
-        *pColordepth = g_xmltool->getInt(FSL_PREFERENCE_COLORDEPTH, 0);
+       
+        *pColordepth = 16;//g_xmltool->getInt(FSL_PREFERENCE_COLORDEPTH, 0);
         LOGI("colordepth is %d", *pColordepth);
         String8 dispMode = g_xmltool->getString(FSL_PREFERENCE_MODE, String8(FSL_PREFERENCE_MODE_DEFAULT));
         disp_mode = dispMode.string();

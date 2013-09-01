@@ -35,11 +35,14 @@ __BEGIN_DECLS
  */
 #define GRALLOC_HARDWARE_MODULE_ID "gralloc"
 
+#define GRALLOC_VIV_HARDWARE_MODULE_ID "gralloc_viv"
+
 /**
  * Name of the graphics device to open
  */
 
 #define GRALLOC_HARDWARE_FB0 "fb0"
+#define GRALLOC_HARDWARE_FB  "fb"
 #define GRALLOC_HARDWARE_GPU0 "gpu0"
 
 enum {

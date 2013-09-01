@@ -17,19 +17,16 @@ LOCAL_PATH := $(call my-dir)
 # HAL module implemenation, not prelinked and stored in
 # hw/<OVERLAY_HARDWARE_MODULE_ID>.<ro.product.board>.so
 
-#TARGET_HAVE_IMX_GRALLOC := true
-
-#ifeq ($(TARGET_HAVE_IMX_GRALLOC),true)
+ifeq ($(TARGET_HAVE_IMX_GRALLOC),true)
 include $(CLEAR_VARS)
 LOCAL_PRELINK_MODULE := false
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
-LOCAL_SHARED_LIBRARIES := liblog libcutils libGLESv1_CM libhardware libutils libexpat 
+LOCAL_SHARED_LIBRARIES := liblog libcutils libGLESv1_CM libhardware libutils 
 
 LOCAL_SRC_FILES := 	\
 	gralloc.cpp 	\
 	framebuffer.cpp \
 	mapper.cpp      \
-        XmlTool.cpp     \
         display_mode.cpp
 
 LOCAL_MODULE := gralloc.$(TARGET_BOARD_PLATFORM)
@@ -52,16 +49,14 @@ endif
 LOCAL_MODULE_TAGS := eng
 
 include $(BUILD_SHARED_LIBRARY)
-#endif
+endif
 
 
 ####build xmltool lib######
-include $(CLEAR_VARS)
-LOCAL_SHARED_LIBRARIES := liblog libcutils libutils libexpat
-LOCAL_C_INCLUDES = external/expat/lib
-LOCAL_SRC_FILES := XmlTool.cpp
-LOCAL_MODULE := libfsl_xmltool
-LOCAL_MODULE_TAGS := optional
-LOCAL_PRELINK_MODULE := false 
-
-include $(BUILD_SHARED_LIBRARY)
+#include $(CLEAR_VARS)
+#LOCAL_SHARED_LIBRARIES := liblog libcutils libutils libexpat
+#LOCAL_C_INCLUDES = external/expat/lib
+#LOCAL_SRC_FILES := XmlTool.cpp
+#LOCAL_MODULE := libfsl_xmltool
+#LOCAL_MODULE_TAGS := optional
+#include $(BUILD_SHARED_LIBRARY)

@@ -36,7 +36,7 @@
 #include <cutils/atomic.h>
 #include <cutils/properties.h>
 
-//#if HAVE_ANDROID_OS
+#if HAVE_ANDROID_OS
 #include <linux/fb.h>
 #include <linux/mxcfb.h>
 #include <linux/videodev.h>
@@ -44,7 +44,7 @@
 
 #include <linux/ipu.h>
 
-//#endif
+#endif
 #include <GLES/gl.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -239,7 +239,7 @@ static void update_to_display(int left, int top, int width, int height, int upda
 #endif
 
 static int nr_framebuffers;
-static android::XmlTool* g_xmltool = NULL;
+static XmlTool* g_xmltool = NULL;
 static int primary_display_type = 0;
 
 sem_t * fslwatermark_sem_open()
@@ -475,7 +475,7 @@ static int set_graphics_fb_mode(int fb, struct configParam* param, int *pColorde
         }
 
         if(g_xmltool == NULL) {
-            g_xmltool = new android::XmlTool(FSL_SETTINGS_PREFERENCE);
+            g_xmltool = new XmlTool(FSL_SETTINGS_PREFERENCE);
             if(g_xmltool == NULL) {
                 LOGE("Error: g_xmltool not created");
                 return -1;
