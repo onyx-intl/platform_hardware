@@ -292,6 +292,14 @@ typedef struct framebuffer_device_t {
 #ifdef FSL_EPDC_FB
     int (*setUpdateRect)(struct framebuffer_device_t* window,
              int *left, int *top, int *width, int *height, int *updatemode, int count);
+
+    void (*screenRefresh)(struct framebuffer_device_t* window, int left, int top, int widht, int height, int mode);
+    void (*fillScreen)(struct framebuffer_device_t* window, int * buffer, int width, int height, int mode);
+    void (*enableScreenUpdate)(struct framebuffer_device_t* window, int enable);
+    void (*setUpdateScheme)(struct framebuffer_device_t* window, int scheme);
+    void (*waitForUpdateFinished)(struct framebuffer_device_t* window);
+   
+
 #else
     int (*setUpdateRect)(struct framebuffer_device_t* window,
             int left, int top, int width, int height);

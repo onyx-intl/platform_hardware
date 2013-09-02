@@ -44,6 +44,8 @@
 
 #include <linux/ipu.h>
 
+#include <sys/time.h>
+
 //#endif
 #include <GLES/gl.h>
 #include <pthread.h>
@@ -78,14 +80,14 @@ struct fb_context_t {
     private_module_t* priv_m;
     int isMainDisp;
 #ifdef FSL_EPDC_FB
-    //Partial udate feature
     bool rect_update;
     int count;      //count need less than MAX_RECT_NUM ;
-    int updatemode[20];
-    int partial_left[20];
-    int partial_top[20];
-    int partial_width[20];
-    int partial_height[20];
+    int updatemode[MAX_RECT_NUM];
+    int partial_left[MAX_RECT_NUM];
+    int partial_top[MAX_RECT_NUM];
+    int partial_width[MAX_RECT_NUM];
+    int partial_height[MAX_RECT_NUM];
+    bool enableUpdate;    
 #endif
 };
 
@@ -95,6 +97,7 @@ struct fb_context_t {
 #define WAVEFORM_MODE_GC16                      0x2   // High fidelity (flashing)
 #define WAVEFORM_MODE_GC4                       0x3   //
 #define WAVEFORM_MODE_ANIM                      0x4   // animation
+#define WAVEFORM_AUTO                           0x5   // animation
 //#define WAVEFORM_MODE_AUTO                    257  // defined in mxcfb.h
 
 
@@ -130,19 +133,123 @@ struct fb_context_t {
 #define EINK_DITHER_COLOR_Y1         0x00000800
 #define EINK_DITHER_COLOR_MASK       0x00000800
 
-#define EINK_DEFAULT_MODE            0x00000004
+#define EINK_DEFAULT_MODE            0x00000045
+#define EINK_GC_MODE            	 98
 
+static int waveformMode(int updatemode) {
+    return updatemode & EINK_WAVEFORM_MODE_MASK;
+}
+
+static int regionMode(int updatemode) {
+    return updatemode & EINK_AUTO_MODE_MASK;
+}
+
+static int refreshMode(int updatemode) {
+    return updatemode & EINK_UPDATE_MODE_MASK;
+}
+
+static int waitMode(int updatemode) {
+    return updatemode & EINK_WAIT_MODE_MASK;
+}
+
+static void mergeRectangle(int & resultLeft, int & resultTop, int & resultRight, int & resultBottom,
+                            int left, int top, int right, int bottom) 
+{
+    if (resultLeft > left) {
+        resultLeft = left;
+    }
+    if (resultTop > top) {
+        resultTop = top;
+    }
+    if (resultRight < right) {
+        resultRight = right;
+    }
+    if (resultBottom < bottom) {
+        resultBottom = bottom;
+    }
+}
+
+static int waveformPriority(int waveform) {
+    /*
+    public static final int EINK_WAVEFORM_MODE_DU = 0x00000001;
+    public static final int EINK_WAVEFORM_MODE_GC16 = 0x00000002;
+    public static final int EINK_WAVEFORM_MODE_GC4 = 0x00000003;
+    public static final int EINK_WAVEFORM_MODE_ANIM = 0x00000004;
+    public static final int EINK_WAVEFORM_MODE_AUTO = 0x00000005;
+    */
+    static const int table[] = {0, 5, 4, 1,  3, 2};
+    static const int count = sizeof(table) / sizeof(table[0]);
+    for(int i = 0; i < count; ++i) {
+        if (table[i] == waveform) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+static int mergeUpdateMode(int currentMode, int newMode) {
+    int currentWf = waveformMode(currentMode);
+    int newWf = waveformMode(newMode);
+    int cp = waveformPriority(currentWf);
+    int np = waveformPriority(newWf);
+    //LOGI("compare wf %d %d %d %d", currentWf, newWf, cp, np);    
+    if (cp < np) {
+        currentWf = newWf;
+    }
+
+    int newRegionMode = (regionMode(currentMode) | regionMode(newMode));
+    int newWaitMode = (waitMode(currentMode) | waitMode(newMode));
+    int refresh = (refreshMode(currentMode) | refreshMode(newMode));
+    int value = currentWf | newRegionMode | newWaitMode | refresh;
+    //LOGI("after process %d %d %d", currentMode, newMode, value);    
+    return value;
+}
+
+static long long current_timestamp() {
+    struct timeval te; 
+    gettimeofday(&te, NULL); // get current time
+    long long milliseconds = te.tv_sec*1000LL + te.tv_usec/1000; // caculate milliseconds
+    //LOGI("milliseconds: %lld\n", milliseconds);
+    return milliseconds;
+}
+
+static int gUpdateScheme;
 __u32 marker_val = 1;
-static void update_to_display(int left, int top, int width, int height, int updatemode, int fb_dev)
+static void update_to_display(int left,
+                              int top,
+                              int width,
+                              int height, 
+                              int updatemode, 
+                              int fb_dev, 
+                              int screenWidth, 
+                              int screenHeight,
+                              bool wait_for_finish = false)
 {
 	struct mxcfb_update_data upd_data;
 	int retval;
 	bool wait_for_complete;
+    bool force_wait = false;
 	int auto_update_mode = AUTO_UPDATE_MODE_REGION_MODE;
 	memset(&upd_data, 0, sizeof(mxcfb_update_data));
 
-//    LOGI("update_to_display:left=%d, top=%d, width=%d, height=%d updatemode=%d\n", left, top, width, height,updatemode);
+    // boundary check
+    // LOGI("update_to_display:(%d, %d - %d, %d) %d (%d %d)\n", left, top, width, height,updatemode, screenWidth, screenHeight);    
 
+    if (left <= 0 || left >= screenWidth) {
+        left = 0;
+    }
+    if (top <= 0 || top >= screenHeight) {
+        top = 0;
+    }
+    if (width <= 0 || width >= screenWidth) {
+        width = screenWidth;
+    }
+    if (height <= 0 || height >= screenHeight) {
+        height = screenHeight;
+    }
+
+    static int count;
+    LOGI("display: %d (%d, %d) - (%d, %d)  mode = 0x%x\n", count++, left, top, width, height, updatemode);
 
     if((updatemode & EINK_WAVEFORM_MODE_MASK) == EINK_WAVEFORM_MODE_DU)
 	   upd_data.waveform_mode = WAVEFORM_MODE_DU;
@@ -204,42 +311,48 @@ static void update_to_display(int left, int top, int width, int height, int upda
 		LOGI("set auto update mode failed.  Error = 0x%x", retval);
 	}
 
-    upd_data.temp = 24; //the temperature is get from linux team
+	upd_data.temp = TEMP_USE_AMBIENT; //the temperature is get from linux team
 	upd_data.update_region.left = left;
 	upd_data.update_region.width = width;
 	upd_data.update_region.top = top;
 	upd_data.update_region.height = height;
+    upd_data.update_marker = marker_val++;
 
-	if (wait_for_complete) {
-		/* Get unique marker value */
-		upd_data.update_marker = marker_val++;
-	} else {
-		upd_data.update_marker = 0;
-	}
+    if (gUpdateScheme == UPDATE_SCHEME_SNAPSHOT) {
+        static long long last_update = 0;
+        bool wfWait = (upd_data.waveform_mode == WAVEFORM_MODE_GC16 || upd_data.waveform_mode == WAVEFORM_MODE_AUTO);
+        long long delta = current_timestamp() - last_update;
+        if (delta <= 500 && wfWait ) {
+            force_wait = true;
+        }
+        last_update = current_timestamp();    
+    }
+
+    // adjust to reduce waiting time.
+    if (wait_for_complete || force_wait) {
+        /* Wait for update to complete */
+        __u32 last_marker = upd_data.update_marker - 1;
+        LOGI("Waiting for last screen update finish: %d", last_marker);
+        retval = ioctl(fb_dev, MXCFB_WAIT_FOR_UPDATE_COMPLETE, &last_marker);
+        if (retval < 0) {
+            LOGI("Wait for update complete failed.  Error = 0x%x", retval);
+        }
+    }
 
 	retval = ioctl(fb_dev, MXCFB_SEND_UPDATE, &upd_data);
-	while (retval < 0) {
-		/* We have limited memory available for updates, so wait and
-		 * then try again after some updates have completed */
-		usleep(300000);
-		retval = ioctl(fb_dev, MXCFB_SEND_UPDATE, &upd_data);
-        LOGI("MXCFB_SEND_UPDATE  retval = 0x%x try again maybe", retval);
+	if (retval < 0) {
+        LOGI("MXCFB_SEND_UPDATE  retval = 0x%x ", retval);
 	}
 
-	if (wait_for_complete) {
-		/* Wait for update to complete */
-		retval = ioctl(fb_dev, MXCFB_WAIT_FOR_UPDATE_COMPLETE, &upd_data.update_marker);
-		if (retval < 0) {
-			LOGI("Wait for update complete failed.  Error = 0x%x", retval);
-		}
-	}
-
-
+    if (wait_for_finish) {
+        LOGI("Waiting for current screen update finish: %d", upd_data.update_marker);
+        retval = ioctl(fb_dev, MXCFB_WAIT_FOR_UPDATE_COMPLETE, &upd_data.update_marker);
+    }
 }
 #endif
 
 static int nr_framebuffers;
-static android::XmlTool* g_xmltool = NULL;
+static XmlTool* g_xmltool = NULL;
 static int primary_display_type = 0;
 
 sem_t * fslwatermark_sem_open()
@@ -315,6 +428,7 @@ static int fb_setUpdateRect(struct framebuffer_device_t* dev,
         return -EINVAL;
     }
 
+
     ctx->rect_update      = true;
     ctx->count            = 0;
     for(int i=0; i < count; i++)
@@ -327,9 +441,62 @@ static int fb_setUpdateRect(struct framebuffer_device_t* dev,
         ctx->partial_height[i]   = height[i];
     }
     ctx->count            = count;
-
     return 0;
 }
+
+static void fb_screenRefresh(struct framebuffer_device_t* dev, int left, int top, int width, int height, int mode) 
+{
+	fb_context_t* ctx = (fb_context_t*)dev;
+    private_module_t* m = reinterpret_cast<private_module_t*>(
+            dev->common.module);
+	update_to_display(left, top, width, height, mode, m->framebuffer->fd,  m->info.xres,  m->info.yres, false);
+}
+
+static void fb_fillScreen(struct framebuffer_device_t* dev, int * buffer, int width, int height, int mode)
+{
+    fb_context_t* ctx = (fb_context_t*)dev;
+    private_module_t* module = reinterpret_cast<private_module_t*>(
+            dev->common.module);
+    int * fb = (int *)module->framebuffer->base;
+    for(int y = 0; y < height; ++y) {
+        memcpy((void *)(fb + y * module->info.xres_virtual / 2),
+           buffer + y * width /  2,
+           width * sizeof(int) / 2);
+    }
+    update_to_display(0, 0, module->info.xres, module->info.yres, mode, module->framebuffer->fd, module->info.xres, module->info.yres, true);
+}
+
+static void fb_enableScreenUpdate(struct framebuffer_device_t* dev, int enable) {
+    fb_context_t* ctx = (fb_context_t*)dev;
+    ctx->enableUpdate = enable;
+}
+
+static void fb_setUpdateScheme(struct framebuffer_device_t * dev, int scheme) {
+    if (gUpdateScheme == scheme) {
+        return;
+    }
+    gUpdateScheme = scheme;    
+    private_module_t* module = reinterpret_cast<private_module_t*>(
+            dev->common.module);
+    
+    int retval = ioctl(module->framebuffer->fd, MXCFB_SET_UPDATE_SCHEME, &scheme);
+    if (retval < 0) {
+        LOGE("Error! set update scheme error!\n");
+    }
+}
+
+static void fb_waitForUpdateFinished(struct framebuffer_device_t * dev) {
+    private_module_t* module = reinterpret_cast<private_module_t*>(
+            dev->common.module);
+    
+    __u32 value = marker_val - 1;
+    LOGI("Waiting for current screen update finish: %d", value);
+    int retval = ioctl(module->framebuffer->fd, MXCFB_WAIT_FOR_UPDATE_COMPLETE, &value);
+    if (retval < 0) {
+        LOGE("Error! set update scheme error!\n");
+    }
+}
+
 #else
 static int fb_setUpdateRect(struct framebuffer_device_t* dev,
         int l, int t, int w, int h)
@@ -383,17 +550,34 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
 #ifdef FSL_EPDC_FB
         if(ctx->rect_update) {
+            int mode = 0, left = INT_MAX, top = INT_MAX, right = 0, bottom = 0;
             for(int i=0; i < ctx->count; i++)
             {
-                update_to_display(ctx->partial_left[i],ctx->partial_top[i],
-                              ctx->partial_width[i],ctx->partial_height[i],
-                              ctx->updatemode[i],m->framebuffer->fd);
+                mode = mergeUpdateMode(mode, ctx->updatemode[i]);
+                mergeRectangle(left, top, right, bottom,
+                               ctx->partial_left[i],
+                               ctx->partial_top[i],
+                               ctx->partial_left[i] + ctx->partial_width[i] - 1,
+                               ctx->partial_top[i] + ctx->partial_height[i] - 1);
             }
 
+            if (ctx->enableUpdate) {
+                if (left == INT_MAX || top == INT_MAX || mode == 0) {
+                    update_to_display(0, 0, m->info.xres, m->info.yres, EINK_DEFAULT_MODE, m->framebuffer->fd, m->info.xres, m->info.yres);
+                } else {
+                    update_to_display(left, top, right - left + 1, bottom - top + 1, mode, m->framebuffer->fd, m->info.xres, m->info.yres);
+                }
+            } else {
+                LOGI("EPD screen update disabled.");
+            }
             ctx->rect_update = false;
         }
         else{
-            update_to_display(0,0,m->info.xres,m->info.yres,EINK_DEFAULT_MODE,m->framebuffer->fd);
+            if (ctx->enableUpdate) {
+                update_to_display(0,0,m->info.xres,m->info.yres,EINK_DEFAULT_MODE,m->framebuffer->fd, m->info.xres, m->info.yres);
+            } else {
+                LOGI("EPD screen update disabled.");
+            }
         }
 #endif
 
@@ -420,17 +604,30 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
 
 #ifdef FSL_EPDC_FB
         if(ctx->rect_update) {
+            int mode = 0, left = INT_MAX, top = INT_MAX, right = 0, bottom = 0;
             for(int i=0; i < ctx->count; i++)
             {
-                update_to_display(ctx->partial_left[i],ctx->partial_top[i],
-                              ctx->partial_width[i],ctx->partial_height[i],
-                              ctx->updatemode[i],m->framebuffer->fd);
+                mode = mergeUpdateMode(mode, ctx->updatemode[i]);
+                mergeRectangle(left, top, right, bottom,
+                               ctx->partial_left[i],
+                               ctx->partial_top[i],
+                               ctx->partial_left[i] + ctx->partial_width[i] - 1,
+                               ctx->partial_top[i] + ctx->partial_height[i] - 1);
             }
 
+            if (ctx->enableUpdate) {
+                if (left == INT_MAX || top == INT_MAX || mode == 0) {
+                    update_to_display(0, 0, m->info.xres, m->info.yres, EINK_DEFAULT_MODE, m->framebuffer->fd, m->info.xres, m->info.yres);
+                } else {
+                    update_to_display(left, top, right - left + 1, bottom - top + 1, mode, m->framebuffer->fd, m->info.xres, m->info.yres);
+                }
+            }
             ctx->rect_update = false;
         }
         else{
-            update_to_display(0,0,m->info.xres,m->info.yres, EINK_DEFAULT_MODE ,m->framebuffer->fd);
+            if (ctx->enableUpdate) {
+                update_to_display(0,0,m->info.xres,m->info.yres, EINK_DEFAULT_MODE ,m->framebuffer->fd, m->info.xres, m->info.yres);
+            }
         }
 #endif
 
@@ -475,7 +672,7 @@ static int set_graphics_fb_mode(int fb, struct configParam* param, int *pColorde
         }
 
         if(g_xmltool == NULL) {
-            g_xmltool = new android::XmlTool(FSL_SETTINGS_PREFERENCE);
+            g_xmltool = new XmlTool(FSL_SETTINGS_PREFERENCE);
             if(g_xmltool == NULL) {
                 LOGE("Error: g_xmltool not created");
                 return -1;
@@ -697,11 +894,11 @@ static int mapFrameBufferWithParamLocked(struct private_module_t* module, struct
     int auto_update_mode = AUTO_UPDATE_MODE_REGION_MODE;
     int retval = ioctl(fd, MXCFB_SET_AUTO_UPDATE_MODE, &auto_update_mode);
     if (retval < 0) {
-	LOGE("Error! set auto update mode error!\n");
-	return -errno;
+	   LOGE("Error! set auto update mode error!\n");
+	   return -errno;
     }
 
-    int scheme_mode = UPDATE_SCHEME_QUEUE_AND_MERGE;
+    int scheme_mode = UPDATE_SCHEME_SNAPSHOT;
     retval = ioctl(fd, MXCFB_SET_UPDATE_SCHEME, &scheme_mode);
     if (retval < 0) {
 	LOGE("Error! set update scheme error!\n");
@@ -799,7 +996,7 @@ static int mapFrameBufferWithParamLocked(struct private_module_t* module, struct
     }
     module->framebuffer->base = intptr_t(vaddr);
     module->framebuffer->phys = intptr_t(finfo.smem_start);
-    memset(vaddr, 0, fbSize);
+    memset(vaddr, 0xffffffff, fbSize);
     return 0;
 }
 
@@ -896,10 +1093,11 @@ static int fb_perform(struct gralloc_module_t const* module,
             switch(operation & 0x0fff) {
                 case OPERATE_CODE_CHANGE_ROTATION:
                 case OPERATE_CODE_CHANGE_OVERSCAN: {
-		    size_t fbSize = pm->framebuffer->size;
-		    void* addr = (void*)(pm->framebuffer->base);
-		    memset(addr, 0, fbSize);
-                    } break;
+                    LOGE("###clear framebuffer.###");
+		          size_t fbSize = pm->framebuffer->size;
+		          void* addr = (void*)(pm->framebuffer->base);
+		          memset(addr, 0xffffffff, fbSize);
+                } break;
                 default:
                     LOGE("<%s, %d> invalide operate code %d!", __FUNCTION__, __LINE__, (int)operation);
                     err = -1;
@@ -956,16 +1154,23 @@ int fb_device_open(hw_module_t const* module, const char* name,
         memset(dev, 0, sizeof(*dev));
 
         /* initialize the procs */
+        dev->enableUpdate = true;
+        gUpdateScheme = UPDATE_SCHEME_SNAPSHOT;
         dev->device.common.tag = HARDWARE_DEVICE_TAG;
         dev->device.common.version = 0;
         dev->device.common.module = const_cast<hw_module_t*>(module);
         dev->device.common.close = fb_close;
         dev->device.setSwapInterval = fb_setSwapInterval;
         dev->device.post            = fb_post;
+        dev->device.waitForUpdateFinished = fb_waitForUpdateFinished;
         #ifndef FSL_EPDC_FB
         dev->device.setUpdateRect = 0;
         #else
         dev->device.setUpdateRect = fb_setUpdateRect;
+        dev->device.screenRefresh = fb_screenRefresh;
+        dev->device.fillScreen = fb_fillScreen;
+        dev->device.enableScreenUpdate = fb_enableScreenUpdate;
+        dev->device.setUpdateScheme = fb_setUpdateScheme;
         #endif
         dev->device.compositionComplete = fb_compositionComplete;
 
